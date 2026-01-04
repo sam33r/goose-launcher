@@ -10,16 +10,20 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/sam33r/goose-launcher/pkg/input"
+	"github.com/sam33r/goose-launcher/pkg/matcher"
 )
 
 // Window manages the launcher UI window
 type Window struct {
-	app       *app.Window
-	theme     *material.Theme
-	items     []input.Item
-	list      *List
-	selected  string // Selected item (empty if none)
-	cancelled bool   // True if user pressed ESC
+	app         *app.Window
+	theme       *material.Theme
+	items       []input.Item      // All items
+	filtered    []input.Item      // Filtered items
+	list        *List
+	searchInput *Input             // Search input field
+	matcher     *matcher.FuzzyMatcher // Fuzzy matcher
+	selected    string // Selected item (empty if none)
+	cancelled   bool   // True if user pressed ESC
 }
 
 // NewWindow creates a new launcher window
@@ -32,12 +36,19 @@ func NewWindow(items []input.Item) *Window {
 
 	theme := material.NewTheme()
 
-	return &Window{
-		app:   w,
-		theme: theme,
-		items: items,
-		list:  NewList(),
+	window := &Window{
+		app:         w,
+		theme:       theme,
+		items:       items,
+		filtered:    items, // Initially show all
+		list:        NewList(),
+		searchInput: NewInput(),
+		matcher:     matcher.NewFuzzyMatcher(false, false),
 	}
+
+	window.searchInput.Focus()
+
+	return window
 }
 
 // Run starts the window event loop
@@ -75,6 +86,21 @@ func (w *Window) Run() (string, error) {
 	}
 }
 
+// filterItems filters items based on the search query
+func (w *Window) filterItems(query string) {
+	if query == "" {
+		w.filtered = w.items
+		return
+	}
+
+	w.filtered = nil
+	for _, item := range w.items {
+		if match, _ := w.matcher.Match(query, item); match {
+			w.filtered = append(w.filtered, item)
+		}
+	}
+}
+
 // handleKey processes keyboard input
 func (w *Window) handleKey(e key.Event) {
 	if e.State != key.Press {
@@ -86,13 +112,13 @@ func (w *Window) handleKey(e key.Event) {
 		w.list.MoveUp()
 
 	case key.NameDownArrow:
-		w.list.MoveDown(len(w.items))
+		w.list.MoveDown(len(w.filtered)) // Use filtered, not items
 
 	case key.NameReturn, key.NameEnter:
-		// Select current item
-		if len(w.items) > 0 {
+		// Select current item from filtered list
+		if len(w.filtered) > 0 {
 			idx := w.list.Selected()
-			w.selected = w.items[idx].Raw
+			w.selected = w.filtered[idx].Raw
 		}
 
 	case key.NameEscape:
@@ -105,10 +131,19 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 	// Register for key events
 	event.Op(gtx.Ops, w)
 
+	// Update filtering when input changes
+	query := w.searchInput.Text()
+	w.filterItems(query)
+
 	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		// Search input at top
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			return w.searchInput.Layout(gtx, w.theme)
+		}),
+
 		// Items list
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return w.list.Layout(gtx, w.theme, w.items)
+			return w.list.Layout(gtx, w.theme, w.filtered)
 		}),
 	)
 }

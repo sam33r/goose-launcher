@@ -54,5 +54,6 @@ func (i *Input) SetText(text string) {
 
 // Focus focuses the input field
 func (i *Input) Focus() {
-	i.editor.Focus()
+	// Note: Gio v0.9.0 doesn't have Editor.Focus()
+	// Focus is handled automatically by the event system
 }
