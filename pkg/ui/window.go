@@ -1,10 +1,9 @@
 package ui
 
 import (
-	"fmt"
-	"image/color"
-
 	"gioui.org/app"
+	"gioui.org/io/event"
+	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/unit"
@@ -15,9 +14,12 @@ import (
 
 // Window manages the launcher UI window
 type Window struct {
-	app   *app.Window
-	theme *material.Theme
-	items []input.Item
+	app       *app.Window
+	theme     *material.Theme
+	items     []input.Item
+	list      *List
+	selected  string // Selected item (empty if none)
+	cancelled bool   // True if user pressed ESC
 }
 
 // NewWindow creates a new launcher window
@@ -34,6 +36,7 @@ func NewWindow(items []input.Item) *Window {
 		app:   w,
 		theme: theme,
 		items: items,
+		list:  NewList(),
 	}
 }
 
@@ -45,24 +48,67 @@ func (w *Window) Run() (string, error) {
 	for {
 		switch e := w.app.Event().(type) {
 		case app.DestroyEvent:
-			return "", e.Err
+			return w.selected, e.Err
 
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
+
+			// Handle keyboard events
+			for {
+				ev, ok := gtx.Event(key.Filter{Focus: w, Name: "", Optional: key.ModShift | key.ModCtrl | key.ModAlt | key.ModSuper})
+				if !ok {
+					break
+				}
+				if kev, ok := ev.(key.Event); ok {
+					w.handleKey(kev)
+				}
+			}
+
 			w.layout(gtx)
 			e.Frame(&ops)
+
+			// Check if we should close
+			if w.selected != "" || w.cancelled {
+				return w.selected, nil
+			}
 		}
+	}
+}
+
+// handleKey processes keyboard input
+func (w *Window) handleKey(e key.Event) {
+	if e.State != key.Press {
+		return
+	}
+
+	switch e.Name {
+	case key.NameUpArrow:
+		w.list.MoveUp()
+
+	case key.NameDownArrow:
+		w.list.MoveDown(len(w.items))
+
+	case key.NameReturn, key.NameEnter:
+		// Select current item
+		if len(w.items) > 0 {
+			idx := w.list.Selected()
+			w.selected = w.items[idx].Raw
+		}
+
+	case key.NameEscape:
+		w.cancelled = true
 	}
 }
 
 // layout renders the window contents
 func (w *Window) layout(gtx layout.Context) layout.Dimensions {
-	// Simple layout: just show item count for now
-	text := fmt.Sprintf("%d items loaded", len(w.items))
+	// Register for key events
+	event.Op(gtx.Ops, w)
 
-	return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		label := material.H1(w.theme, text)
-		label.Color = color.NRGBA{R: 0, G: 0, B: 0, A: 255}
-		return label.Layout(gtx)
-	})
+	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+		// Items list
+		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+			return w.list.Layout(gtx, w.theme, w.items)
+		}),
+	)
 }
