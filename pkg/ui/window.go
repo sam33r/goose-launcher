@@ -6,7 +6,9 @@ import (
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
+	"gioui.org/op/clip"
 	"gioui.org/unit"
+	"gioui.org/widget"
 	"gioui.org/widget/material"
 
 	"github.com/sam33r/goose-launcher/pkg/input"
@@ -15,35 +17,41 @@ import (
 
 // Window manages the launcher UI window
 type Window struct {
-	app         *app.Window
-	theme       *material.Theme
-	items       []input.Item      // All items
-	filtered    []input.Item      // Filtered items
-	list        *List
-	searchInput *Input             // Search input field
-	matcher     *matcher.FuzzyMatcher // Fuzzy matcher
-	selected    string // Selected item (empty if none)
-	cancelled   bool   // True if user pressed ESC
+	app              *app.Window
+	theme            *material.Theme
+	items            []input.Item      // All items
+	filtered         []input.Item      // Filtered items
+	matchPositions   map[int][]int     // Mapping of filtered index to match positions
+	list             *List
+	searchInput      *Input             // Search input field
+	matcher          *matcher.FuzzyMatcher // Fuzzy matcher
+	selected         string // Selected item (empty if none)
+	cancelled        bool   // True if user pressed ESC
+	keyTag           bool   // Tag for key events
+	highlightMatches bool   // Whether to highlight matching text
 }
 
 // NewWindow creates a new launcher window
-func NewWindow(items []input.Item) *Window {
+func NewWindow(items []input.Item, highlightMatches bool) *Window {
 	w := new(app.Window)
 	w.Option(
 		app.Title("Goose Launcher"),
 		app.Size(unit.Dp(800), unit.Dp(600)),
+		app.Decorated(false), // Remove OS title bar
 	)
 
 	theme := material.NewTheme()
 
 	window := &Window{
-		app:         w,
-		theme:       theme,
-		items:       items,
-		filtered:    items, // Initially show all
-		list:        NewList(),
-		searchInput: NewInput(),
-		matcher:     matcher.NewFuzzyMatcher(false, false),
+		app:              w,
+		theme:            theme,
+		items:            items,
+		filtered:         items, // Initially show all
+		matchPositions:   make(map[int][]int),
+		list:             NewList(),
+		searchInput:      NewInput(),
+		matcher:          matcher.NewFuzzyMatcher(false, false),
+		highlightMatches: highlightMatches,
 	}
 
 	window.searchInput.Focus()
@@ -56,26 +64,21 @@ func NewWindow(items []input.Item) *Window {
 func (w *Window) Run() (string, error) {
 	var ops op.Ops
 
+	// Debug: Force window to be visible
+	w.app.Option(app.Title("Goose Launcher"))
+
 	for {
-		switch e := w.app.Event().(type) {
+		e := w.app.Event()
+		switch e := e.(type) {
 		case app.DestroyEvent:
 			return w.selected, e.Err
 
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
 
-			// Handle keyboard events
-			for {
-				ev, ok := gtx.Event(key.Filter{Focus: w, Name: "", Optional: key.ModShift | key.ModCtrl | key.ModAlt | key.ModSuper})
-				if !ok {
-					break
-				}
-				if kev, ok := ev.(key.Event); ok {
-					w.handleKey(kev)
-				}
-			}
-
+			// Layout the UI
 			w.layout(gtx)
+
 			e.Frame(&ops)
 
 			// Check if we should close
@@ -90,52 +93,82 @@ func (w *Window) Run() (string, error) {
 func (w *Window) filterItems(query string) {
 	if query == "" {
 		w.filtered = w.items
+		w.matchPositions = make(map[int][]int)
 		return
 	}
 
 	w.filtered = nil
+	w.matchPositions = make(map[int][]int)
+	filteredIdx := 0
 	for _, item := range w.items {
-		if match, _ := w.matcher.Match(query, item); match {
+		match, positions := w.matcher.Match(query, item)
+		if match {
 			w.filtered = append(w.filtered, item)
+			w.matchPositions[filteredIdx] = positions
+			filteredIdx++
 		}
-	}
-}
-
-// handleKey processes keyboard input
-func (w *Window) handleKey(e key.Event) {
-	if e.State != key.Press {
-		return
-	}
-
-	switch e.Name {
-	case key.NameUpArrow:
-		w.list.MoveUp()
-
-	case key.NameDownArrow:
-		w.list.MoveDown(len(w.filtered)) // Use filtered, not items
-
-	case key.NameReturn, key.NameEnter:
-		// Select current item from filtered list
-		if len(w.filtered) > 0 {
-			idx := w.list.Selected()
-			w.selected = w.filtered[idx].Raw
-		}
-
-	case key.NameEscape:
-		w.cancelled = true
 	}
 }
 
 // layout renders the window contents
 func (w *Window) layout(gtx layout.Context) layout.Dimensions {
-	// Register for key events
-	event.Op(gtx.Ops, w)
+	// Register for keyboard events FIRST (cover entire window area)
+	// This ensures window-level keys are registered before editor widget
+	area := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)
+	event.Op(gtx.Ops, &w.keyTag)
+	area.Pop()
 
-	// Update filtering when input changes
-	query := w.searchInput.Text()
-	w.filterItems(query)
+	// Process keyboard events for arrow keys BEFORE rendering
+	// This ensures they're handled even if editor has focus
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameUpArrow})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			w.list.MoveUp()
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
 
-	return layout.Flex{Axis: layout.Vertical}.Layout(gtx,
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameDownArrow})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			w.list.MoveDown(len(w.filtered))
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+
+	// Process Return key (for selection)
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameReturn})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			if len(w.filtered) > 0 {
+				idx := w.list.Selected()
+				w.selected = w.filtered[idx].Raw
+			}
+		}
+	}
+
+	// Process ESC key
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameEscape})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			w.cancelled = true
+		}
+	}
+
+	// Render everything
+	dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
 		// Search input at top
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return w.searchInput.Layout(gtx, w.theme)
@@ -143,7 +176,41 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 
 		// Items list
 		layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-			return w.list.Layout(gtx, w.theme, w.filtered)
+			return w.list.Layout(gtx, w.theme, w.filtered, w.matchPositions, w.highlightMatches)
 		}),
 	)
+
+	// After layout, get current query and update filtering for next frame
+	query := w.searchInput.Text()
+	w.filterItems(query)
+
+	// Check for item clicks
+	clickedIdx := w.list.GetClicked()
+	if clickedIdx >= 0 && clickedIdx < len(w.filtered) {
+		w.selected = w.filtered[clickedIdx].Raw
+		w.list.ResetClicked()
+	}
+
+	// Process editor events for text changes
+	for {
+		ev, ok := w.searchInput.Editor().Update(gtx)
+		if !ok {
+			break
+		}
+
+		// Check for change event (text changed) - request redraw so filtering updates
+		if _, ok := ev.(widget.ChangeEvent); ok {
+			gtx.Execute(op.InvalidateCmd{})
+		}
+
+		// Check for submit event (Enter key from editor)
+		if _, ok := ev.(widget.SubmitEvent); ok {
+			if len(w.filtered) > 0 {
+				idx := w.list.Selected()
+				w.selected = w.filtered[idx].Raw
+			}
+		}
+	}
+
+	return dims
 }

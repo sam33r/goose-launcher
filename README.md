@@ -54,11 +54,40 @@ pkg/
 
 ## Performance
 
-Current benchmarks (MVP):
+### Current Benchmarks (Apple M2 Pro)
+
+| Dataset Size | Filter Latency | Memory Usage |
+|--------------|----------------|--------------|
+| 100 items    | ~22µs          | ~12 KB       |
+| 10k items    | ~2.5ms         | ~1.7 MB      |
+| 100k items   | ~25ms          | ~19 MB       |
+| 1M items     | ~275ms         | ~196 MB      |
+
+**Key Metrics:**
 - Launch time: ~50ms ✓
-- Filter latency: <50ms ✓
-- Memory: <30MB (10k items) ✓
+- Rendering: constant O(1) regardless of dataset size ✓
+- Highlighting overhead: ~2.3x (still <16ms for 60fps) ✓
 - Binary size: 8.3MB (universal) ✓
+
+**Recommendations:**
+- **< 10k items**: All features enabled, instant responsiveness
+- **10k-100k items**: Consider debouncing (50-100ms)
+- **> 100k items**: Disable highlighting with `--highlight-matches=false`
+
+See [BENCHMARKS.md](BENCHMARKS.md) for detailed performance analysis and profiling guides.
+
+### Running Benchmarks
+
+```bash
+# Quick automated benchmarks
+./scripts/run-benchmarks.sh
+
+# Interactive performance test
+./scripts/test-performance.sh
+
+# Test with custom dataset
+./generate-dataset -count 100000 | ./goose-launcher
+```
 
 ## Development
 

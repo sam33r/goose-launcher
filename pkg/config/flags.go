@@ -7,20 +7,22 @@ import (
 
 // Config holds launcher configuration from CLI flags
 type Config struct {
-	ExactMode    bool
-	NoSort       bool
-	Height       int
-	Layout       string
-	Keybindings  []string // --bind flags (stored for later parsing)
-	Interactive  bool
+	ExactMode        bool
+	NoSort           bool
+	Height           int
+	Layout           string
+	Keybindings      []string // --bind flags (stored for later parsing)
+	Interactive      bool
+	HighlightMatches bool // Highlight matching text in results (default: true)
 }
 
 // ParseFlags parses command-line arguments into Config
 func ParseFlags(args []string) (*Config, error) {
 	cfg := &Config{
-		NoSort: true,   // Default: maintain input order (fzf compatibility)
-		Height: 100,    // Default: full height
-		Layout: "default",
+		NoSort:           true,   // Default: maintain input order (fzf compatibility)
+		Height:           100,    // Default: full height
+		Layout:           "default",
+		HighlightMatches: true,   // Default: highlight matches enabled
 	}
 
 	fs := flag.NewFlagSet("goose-launcher", flag.ContinueOnError)
@@ -32,6 +34,7 @@ func ParseFlags(args []string) (*Config, error) {
 	fs.IntVar(&cfg.Height, "height", 100, "window height (percentage)")
 	fs.StringVar(&cfg.Layout, "layout", "default", "layout style (default|reverse)")
 	fs.BoolVar(&cfg.Interactive, "interactive", false, "interactive mode (read stdin continuously)")
+	fs.BoolVar(&cfg.HighlightMatches, "highlight-matches", true, "highlight matching text in results")
 
 	// Custom handling for --bind flags (can appear multiple times)
 	var bindFlags multiFlag

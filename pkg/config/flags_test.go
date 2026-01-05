@@ -82,4 +82,67 @@ func TestParseFlags_Defaults(t *testing.T) {
 	if cfg.Height != 100 {
 		t.Errorf("expected default Height 100, got %d", cfg.Height)
 	}
+	if !cfg.HighlightMatches {
+		t.Error("expected HighlightMatches true by default")
+	}
+}
+
+// TestHighlightMatchesDefaultTrue tests that --highlight-matches defaults to true
+func TestHighlightMatchesDefaultTrue(t *testing.T) {
+	cfg, err := ParseFlags([]string{})
+	if err != nil {
+		t.Fatalf("ParseFlags failed: %v", err)
+	}
+
+	if !cfg.HighlightMatches {
+		t.Error("HighlightMatches should default to true")
+	}
+}
+
+// TestHighlightMatchesCanBeEnabled tests that --highlight-matches=true works
+func TestHighlightMatchesCanBeEnabled(t *testing.T) {
+	cfg, err := ParseFlags([]string{"--highlight-matches=true"})
+	if err != nil {
+		t.Fatalf("ParseFlags failed: %v", err)
+	}
+
+	if !cfg.HighlightMatches {
+		t.Error("HighlightMatches should be true when --highlight-matches=true")
+	}
+}
+
+// TestHighlightMatchesCanBeDisabled tests that --highlight-matches=false works
+func TestHighlightMatchesCanBeDisabled(t *testing.T) {
+	cfg, err := ParseFlags([]string{"--highlight-matches=false"})
+	if err != nil {
+		t.Fatalf("ParseFlags failed: %v", err)
+	}
+
+	if cfg.HighlightMatches {
+		t.Error("HighlightMatches should be false when --highlight-matches=false")
+	}
+}
+
+// TestHighlightMatchesWithOtherFlags tests that highlight-matches works with other flags
+func TestHighlightMatchesWithOtherFlags(t *testing.T) {
+	cfg, err := ParseFlags([]string{
+		"--exact",
+		"--highlight-matches=false",
+		"--height=50",
+	})
+	if err != nil {
+		t.Fatalf("ParseFlags failed: %v", err)
+	}
+
+	if cfg.HighlightMatches {
+		t.Error("HighlightMatches should be false")
+	}
+
+	if !cfg.ExactMode {
+		t.Error("ExactMode should be true")
+	}
+
+	if cfg.Height != 50 {
+		t.Errorf("Height = %d, want 50", cfg.Height)
+	}
 }
