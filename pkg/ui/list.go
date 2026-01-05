@@ -76,7 +76,6 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 		// fzf-style colors: light text on dark background
 		baseTextColor := color.NRGBA{R: 220, G: 220, B: 220, A: 255}  // Light gray text
 		highlightColor := color.NRGBA{R: 255, G: 100, B: 180, A: 255} // Pink/magenta for matches
-		selectionBgColor := color.NRGBA{R: 40, G: 40, B: 40, A: 255}  // Dark gray background for selection
 		barColor := color.NRGBA{R: 255, G: 0, B: 128, A: 255}         // Pink/magenta bar
 		barWidth := gtx.Dp(unit.Dp(4))
 		barPadding := gtx.Dp(unit.Dp(8)) // Padding between bar and text
@@ -105,10 +104,9 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 				}
 			}),
 
-			// Text content with background
+			// Text content (render directly without background for now)
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				// First, measure the text dimensions
-				macro := op.Record(gtx.Ops)
+				// Render text directly
 				var textDims layout.Dimensions
 				if highlightMatches && len(matchPositions) > 0 {
 					textDims = l.layoutHighlightedText(gtx, theme, item.Text, matchPositions, baseTextColor, highlightColor)
@@ -117,20 +115,8 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 					label.Color = baseTextColor
 					textDims = label.Layout(gtx)
 				}
-				call := macro.Stop()
 
-				// Draw selection background FIRST (if selected)
-				if selected {
-					bgSize := image.Pt(gtx.Constraints.Max.X, textDims.Size.Y)
-					stack := clip.Rect{Max: bgSize}.Push(gtx.Ops)
-					paint.Fill(gtx.Ops, selectionBgColor)
-					stack.Pop()
-				}
-
-				// Now draw the text on top
-				call.Add(gtx.Ops)
-
-				// Set up click area AFTER drawing
+				// Set up click handling
 				clickArea := clip.Rect{Max: textDims.Size}.Push(gtx.Ops)
 				event.Op(gtx.Ops, &l.clickTags[index])
 
