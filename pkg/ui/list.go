@@ -107,7 +107,7 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 
 			// Text content with background
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				// Record text layout
+				// First, measure the text dimensions
 				macro := op.Record(gtx.Ops)
 				var textDims layout.Dimensions
 				if highlightMatches && len(matchPositions) > 0 {
@@ -119,14 +119,18 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 				}
 				call := macro.Stop()
 
-				// Draw selection background (full width)
+				// Draw selection background FIRST (if selected)
 				if selected {
 					bgSize := image.Pt(gtx.Constraints.Max.X, textDims.Size.Y)
-					defer clip.Rect{Max: bgSize}.Push(gtx.Ops).Pop()
+					stack := clip.Rect{Max: bgSize}.Push(gtx.Ops)
 					paint.Fill(gtx.Ops, selectionBgColor)
+					stack.Pop()
 				}
 
-				// Register click area
+				// Now draw the text on top
+				call.Add(gtx.Ops)
+
+				// Set up click area AFTER drawing
 				clickArea := clip.Rect{Max: textDims.Size}.Push(gtx.Ops)
 				event.Op(gtx.Ops, &l.clickTags[index])
 
@@ -146,9 +150,6 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 					}
 				}
 				clickArea.Pop()
-
-				// Draw the text on top
-				call.Add(gtx.Ops)
 
 				return textDims
 			}),
