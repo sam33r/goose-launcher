@@ -4,10 +4,7 @@ import (
 	"image"
 	"image/color"
 
-	"gioui.org/io/event"
-	"gioui.org/io/pointer"
 	"gioui.org/layout"
-	"gioui.org/op"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
 	"gioui.org/unit"
@@ -49,6 +46,9 @@ func (l *List) Layout(gtx layout.Context, theme *material.Theme, items []input.I
 		return layout.Dimensions{}
 	}
 
+	// DEBUG: Log that we're rendering
+	// fmt.Printf("DEBUG: Layout called with %d items\n", len(items))
+
 	// Ensure selection is in bounds
 	if l.selected >= len(items) {
 		l.selected = len(items) - 1
@@ -66,26 +66,29 @@ func (l *List) Layout(gtx layout.Context, theme *material.Theme, items []input.I
 
 	return material.List(theme, &l.list).Layout(gtx, len(items), func(gtx layout.Context, index int) layout.Dimensions {
 		matchPos := matchPositions[index]
-		return l.layoutItem(gtx, theme, items[index], index, index == l.selected, matchPos, highlightMatches)
+		dims := l.layoutItem(gtx, theme, items[index], index, index == l.selected, matchPos, highlightMatches)
+		// DEBUG: Log each item layout
+		// fmt.Printf("DEBUG: Item %d layouted, dims=%v\n", index, dims)
+		return dims
 	})
 }
 
 // layoutItem renders a single list item
 func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.Item, index int, selected bool, matchPositions []int, highlightMatches bool) layout.Dimensions {
 	return layout.UniformInset(unit.Dp(2)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		// fzf-style colors: light text on dark background
+		// fzf-style colors
 		baseTextColor := color.NRGBA{R: 220, G: 220, B: 220, A: 255}  // Light gray text
 		highlightColor := color.NRGBA{R: 255, G: 100, B: 180, A: 255} // Pink/magenta for matches
+		selectionBgColor := color.NRGBA{R: 40, G: 40, B: 40, A: 255}  // Dark gray background for selection
 		barColor := color.NRGBA{R: 255, G: 0, B: 128, A: 255}         // Pink/magenta bar
 		barWidth := gtx.Dp(unit.Dp(4))
-		barPadding := gtx.Dp(unit.Dp(8)) // Padding between bar and text
+		barPadding := gtx.Dp(unit.Dp(8))
 
 		if selected {
 			baseTextColor = color.NRGBA{R: 255, G: 255, B: 255, A: 255} // Pure white when selected
 			highlightColor = color.NRGBA{R: 255, G: 180, B: 220, A: 255} // Light pink when selected
 		}
 
-		// Use Flex layout to properly position bar and text
 		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
 			// Selection bar (if selected)
 			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
@@ -96,17 +99,24 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 
 				// Draw selection bar
 				barSize := image.Pt(barWidth, gtx.Constraints.Max.Y)
-				defer clip.Rect{Max: barSize}.Push(gtx.Ops).Pop()
+				barStack := clip.Rect{Max: barSize}.Push(gtx.Ops)
 				paint.Fill(gtx.Ops, barColor)
+				barStack.Pop()
 
-				return layout.Dimensions{
-					Size: image.Pt(barWidth+barPadding, gtx.Constraints.Max.Y),
-				}
+				return layout.Dimensions{Size: image.Pt(barWidth+barPadding, gtx.Constraints.Max.Y)}
 			}),
 
-			// Text content (render directly without background for now)
+			// Text content
 			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				// Render text directly
+				// Draw selection background if selected
+				if selected {
+					bgSize := image.Pt(gtx.Constraints.Max.X, 30) // Fixed height for now
+					bgStack := clip.Rect{Max: bgSize}.Push(gtx.Ops)
+					paint.Fill(gtx.Ops, selectionBgColor)
+					bgStack.Pop()
+				}
+
+				// Render text
 				var textDims layout.Dimensions
 				if highlightMatches && len(matchPositions) > 0 {
 					textDims = l.layoutHighlightedText(gtx, theme, item.Text, matchPositions, baseTextColor, highlightColor)
@@ -115,27 +125,6 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 					label.Color = baseTextColor
 					textDims = label.Layout(gtx)
 				}
-
-				// Set up click handling
-				clickArea := clip.Rect{Max: textDims.Size}.Push(gtx.Ops)
-				event.Op(gtx.Ops, &l.clickTags[index])
-
-				// Check for clicks
-				for {
-					ev, ok := gtx.Event(pointer.Filter{
-						Target: &l.clickTags[index],
-						Kinds:  pointer.Press,
-					})
-					if !ok {
-						break
-					}
-					if _, ok := ev.(pointer.Event); ok {
-						l.clickedIdx = index
-						l.selected = index
-						gtx.Execute(op.InvalidateCmd{})
-					}
-				}
-				clickArea.Pop()
 
 				return textDims
 			}),
