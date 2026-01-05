@@ -1,0 +1,43 @@
+# Binaries
+goose-launcher
+goose-launcher-*
+generate-dataset
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binaries
+*.test
+test-*
+
+# Coverage files
+*.out
+coverage.txt
+coverage.html
+
+# Go workspace file
+go.work
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+
+# Benchmark results
+bench-results/
+*.prof
+
+# Temporary files
+tmp/
+temp/

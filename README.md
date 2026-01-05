@@ -16,14 +16,32 @@ Native macOS launcher for Goose - a drop-in replacement for fzf with rich UI and
 
 See [NATIVE_LAUNCHER_SPEC.md](../goose/mayor/rig/NATIVE_LAUNCHER_SPEC.md) for full specification.
 
+## Installation
+
+### Using `go install` (Recommended)
+
+```bash
+go install github.com/sam33r/goose-launcher/cmd/goose-launcher@latest
+```
+
+### From Source
+
+```bash
+git clone https://github.com/sam33r/goose-launcher.git
+cd goose-launcher
+make install
+```
+
+See [INSTALL.md](INSTALL.md) for detailed installation instructions.
+
 ## Quick Start
 
 ```bash
-# Install
-./install.sh
-
 # Test
 echo -e "Item 1\nItem 2\nItem 3" | goose-launcher
+
+# With files
+find . -type f | goose-launcher
 
 # Configure Goose
 echo 'LAUNCHER_CMD="goose-launcher -e --no-sort --height=100"' >> ~/.config/goose
@@ -31,7 +49,9 @@ echo 'LAUNCHER_CMD="goose-launcher -e --no-sort --height=100"' >> ~/.config/goos
 
 ## Documentation
 
-- [Usage Guide](docs/USAGE.md)
+- [Installation Guide](INSTALL.md) - Detailed installation methods
+- [Usage Guide](docs/USAGE.md) - Command-line usage and features
+- [Benchmarks](BENCHMARKS.md) - Performance analysis and profiling
 - [Technical Spec](../goose/mayor/rig/NATIVE_LAUNCHER_SPEC.md)
 - [Implementation Plan](docs/plans/2026-01-03-native-launcher-mvp.md)
 
