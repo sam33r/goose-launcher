@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"image"
 	"image/color"
 
 	"gioui.org/io/event"
@@ -18,10 +19,12 @@ import (
 
 // List displays a scrollable list of items
 type List struct {
-	list       widget.List
-	selected   int
-	clickedIdx int  // Index of clicked item (-1 if none)
-	clickTags  []bool // Tags for click tracking (one per potential item)
+	list           widget.List
+	selected       int
+	clickedIdx     int  // Index of clicked item (-1 if none)
+	clickTags      []bool // Tags for click tracking (one per potential item)
+	scrollToItem   int  // Item to scroll to (-1 if no scroll needed)
+	needsScroll    bool // True if we need to scroll on next layout
 }
 
 // NewList creates a new list widget
@@ -32,9 +35,11 @@ func NewList() *List {
 				Axis: layout.Vertical,
 			},
 		},
-		selected:   0,
-		clickedIdx: -1,
-		clickTags:  make([]bool, 1000), // Pre-allocate tags for up to 1000 items
+		selected:     0,
+		clickedIdx:   -1,
+		clickTags:    make([]bool, 1000), // Pre-allocate tags for up to 1000 items
+		scrollToItem: -1,
+		needsScroll:  false,
 	}
 }
 
@@ -52,6 +57,13 @@ func (l *List) Layout(gtx layout.Context, theme *material.Theme, items []input.I
 		l.selected = 0
 	}
 
+	// Handle scrolling in layout context
+	if l.needsScroll && l.scrollToItem >= 0 && l.scrollToItem < len(items) {
+		l.list.ScrollTo(l.scrollToItem)
+		l.needsScroll = false
+		l.scrollToItem = -1
+	}
+
 	return material.List(theme, &l.list).Layout(gtx, len(items), func(gtx layout.Context, index int) layout.Dimensions {
 		matchPos := matchPositions[index]
 		return l.layoutItem(gtx, theme, items[index], index, index == l.selected, matchPos, highlightMatches)
@@ -60,64 +72,87 @@ func (l *List) Layout(gtx layout.Context, theme *material.Theme, items []input.I
 
 // layoutItem renders a single list item
 func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.Item, index int, selected bool, matchPositions []int, highlightMatches bool) layout.Dimensions {
-	return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		// Determine text color based on selection
-		baseTextColor := color.NRGBA{R: 0, G: 0, B: 0, A: 255}       // Black text
-		highlightColor := color.NRGBA{R: 255, G: 0, B: 0, A: 255}    // Red highlight
+	return layout.UniformInset(unit.Dp(2)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+		// fzf-style colors: light text on dark background
+		baseTextColor := color.NRGBA{R: 220, G: 220, B: 220, A: 255}  // Light gray text
+		highlightColor := color.NRGBA{R: 255, G: 100, B: 180, A: 255} // Pink/magenta for matches
+		selectionBgColor := color.NRGBA{R: 40, G: 40, B: 40, A: 255}  // Dark gray background for selection
+		barColor := color.NRGBA{R: 255, G: 0, B: 128, A: 255}         // Pink/magenta bar
+		barWidth := gtx.Dp(unit.Dp(4))
+		barPadding := gtx.Dp(unit.Dp(8)) // Padding between bar and text
+
 		if selected {
-			baseTextColor = color.NRGBA{R: 255, G: 255, B: 255, A: 255} // White text when selected
-			highlightColor = color.NRGBA{R: 255, G: 200, B: 200, A: 255} // Light red highlight when selected
+			baseTextColor = color.NRGBA{R: 255, G: 255, B: 255, A: 255} // Pure white when selected
+			highlightColor = color.NRGBA{R: 255, G: 180, B: 220, A: 255} // Light pink when selected
 		}
 
-		// Layout the text (with or without highlighting)
-		var textDims layout.Dimensions
-		macro := op.Record(gtx.Ops)
+		// Use Flex layout to properly position bar and text
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			// Selection bar (if selected)
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				if !selected {
+					// Reserve space even when not selected for consistent alignment
+					return layout.Dimensions{Size: image.Pt(barWidth+barPadding, 0)}
+				}
 
-		if highlightMatches && len(matchPositions) > 0 {
-			// Render with highlighting
-			textDims = l.layoutHighlightedText(gtx, theme, item.Text, matchPositions, baseTextColor, highlightColor)
-		} else {
-			// Render without highlighting
-			label := material.Body1(theme, item.Text)
-			label.Color = baseTextColor
-			textDims = label.Layout(gtx)
-		}
+				// Draw selection bar
+				barSize := image.Pt(barWidth, gtx.Constraints.Max.Y)
+				defer clip.Rect{Max: barSize}.Push(gtx.Ops).Pop()
+				paint.Fill(gtx.Ops, barColor)
 
-		call := macro.Stop()
+				return layout.Dimensions{
+					Size: image.Pt(barWidth+barPadding, gtx.Constraints.Max.Y),
+				}
+			}),
 
-		// Draw selection background
-		if selected {
-			bgColor := color.NRGBA{R: 0, G: 122, B: 255, A: 255}
-			rect := clip.Rect{Max: textDims.Size}.Push(gtx.Ops)
-			paint.Fill(gtx.Ops, bgColor)
-			rect.Pop()
-		}
+			// Text content with background
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				// Record text layout
+				macro := op.Record(gtx.Ops)
+				var textDims layout.Dimensions
+				if highlightMatches && len(matchPositions) > 0 {
+					textDims = l.layoutHighlightedText(gtx, theme, item.Text, matchPositions, baseTextColor, highlightColor)
+				} else {
+					label := material.Body1(theme, item.Text)
+					label.Color = baseTextColor
+					textDims = label.Layout(gtx)
+				}
+				call := macro.Stop()
 
-		// Register click area
-		clickArea := clip.Rect{Max: textDims.Size}.Push(gtx.Ops)
-		event.Op(gtx.Ops, &l.clickTags[index])
+				// Draw selection background (full width)
+				if selected {
+					bgSize := image.Pt(gtx.Constraints.Max.X, textDims.Size.Y)
+					defer clip.Rect{Max: bgSize}.Push(gtx.Ops).Pop()
+					paint.Fill(gtx.Ops, selectionBgColor)
+				}
 
-		// Check for clicks
-		for {
-			ev, ok := gtx.Event(pointer.Filter{
-				Target: &l.clickTags[index],
-				Kinds:  pointer.Press,
-			})
-			if !ok {
-				break
-			}
-			if _, ok := ev.(pointer.Event); ok {
-				l.clickedIdx = index
-				l.selected = index
-				gtx.Execute(op.InvalidateCmd{})
-			}
-		}
-		clickArea.Pop()
+				// Register click area
+				clickArea := clip.Rect{Max: textDims.Size}.Push(gtx.Ops)
+				event.Op(gtx.Ops, &l.clickTags[index])
 
-		// Draw the text on top
-		call.Add(gtx.Ops)
+				// Check for clicks
+				for {
+					ev, ok := gtx.Event(pointer.Filter{
+						Target: &l.clickTags[index],
+						Kinds:  pointer.Press,
+					})
+					if !ok {
+						break
+					}
+					if _, ok := ev.(pointer.Event); ok {
+						l.clickedIdx = index
+						l.selected = index
+						gtx.Execute(op.InvalidateCmd{})
+					}
+				}
+				clickArea.Pop()
 
-		return textDims
+				// Draw the text on top
+				call.Add(gtx.Ops)
+
+				return textDims
+			}),
+		)
 	})
 }
 
@@ -180,7 +215,7 @@ func (l *List) layoutHighlightedText(gtx layout.Context, theme *material.Theme, 
 		children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			label := material.Body1(theme, segment.content)
 			label.Color = segment.color
-			label.TextSize = unit.Sp(14)
+			// Don't set TextSize - use theme default for consistency
 			return label.Layout(gtx)
 		})
 	}
@@ -192,6 +227,9 @@ func (l *List) layoutHighlightedText(gtx layout.Context, theme *material.Theme, 
 func (l *List) MoveUp() {
 	if l.selected > 0 {
 		l.selected--
+		// Request scroll to make selected item visible (will happen on next layout)
+		l.scrollToItem = l.selected
+		l.needsScroll = true
 	}
 }
 
@@ -199,6 +237,9 @@ func (l *List) MoveUp() {
 func (l *List) MoveDown(itemCount int) {
 	if l.selected < itemCount-1 {
 		l.selected++
+		// Request scroll to make selected item visible (will happen on next layout)
+		l.scrollToItem = l.selected
+		l.needsScroll = true
 	}
 }
 

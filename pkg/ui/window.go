@@ -1,12 +1,18 @@
 package ui
 
 import (
+	"fmt"
+	"image/color"
+
 	"gioui.org/app"
+	"gioui.org/font/gofont"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/layout"
 	"gioui.org/op"
 	"gioui.org/op/clip"
+	"gioui.org/op/paint"
+	"gioui.org/text"
 	"gioui.org/unit"
 	"gioui.org/widget"
 	"gioui.org/widget/material"
@@ -41,6 +47,14 @@ func NewWindow(items []input.Item, highlightMatches bool) *Window {
 	)
 
 	theme := material.NewTheme()
+
+	// Configure monospace font (Go Mono from gofont collection)
+	theme.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+
+	// fzf-style colors: dark background, light text
+	theme.Bg = color.NRGBA{R: 0, G: 0, B: 0, A: 255}           // Black background
+	theme.Fg = color.NRGBA{R: 220, G: 220, B: 220, A: 255}     // Light gray text
+	theme.ContrastBg = color.NRGBA{R: 30, G: 30, B: 30, A: 255} // Slightly lighter for contrast
 
 	window := &Window{
 		app:              w,
@@ -167,9 +181,20 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 		}
 	}
 
+	// Paint dark background (fzf-style)
+	paint.Fill(gtx.Ops, w.theme.Bg)
+
 	// Render everything
 	dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		// Search input at top
+		// Item count display (fzf-style: "X/Y")
+		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+			countText := fmt.Sprintf("  %d/%d", len(w.filtered), len(w.items))
+			label := material.Body1(w.theme, countText)
+			label.Color = color.NRGBA{R: 150, G: 150, B: 150, A: 255} // Dim gray
+			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, label.Layout)
+		}),
+
+		// Search input
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			return w.searchInput.Layout(gtx, w.theme)
 		}),

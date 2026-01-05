@@ -27,7 +27,7 @@ func NewInput() *Input {
 	}
 }
 
-// Layout renders the input field
+// Layout renders the input field (fzf-style with ">" prompt)
 func (i *Input) Layout(gtx layout.Context, theme *material.Theme) layout.Dimensions {
 	// Request focus on first layout
 	if i.requestFocus {
@@ -35,19 +35,24 @@ func (i *Input) Layout(gtx layout.Context, theme *material.Theme) layout.Dimensi
 		i.requestFocus = false
 	}
 
-	border := widget.Border{
-		Color: color.NRGBA{R: 200, G: 200, B: 200, A: 255},
-		Width: unit.Dp(1),
-	}
-
+	// fzf-style: prompt + input field on dark background
 	return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-		return border.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-			return layout.UniformInset(unit.Dp(8)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-				editor := material.Editor(theme, &i.editor, "Search...")
-				editor.TextSize = unit.Sp(16)
+		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
+			// ">" prompt (fzf-style)
+			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+				prompt := material.Body1(theme, "> ")
+				prompt.Color = color.NRGBA{R: 100, G: 180, B: 255, A: 255} // Blue prompt
+				return prompt.Layout(gtx)
+			}),
+
+			// Input field
+			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
+				editor := material.Editor(theme, &i.editor, "")
+				editor.Color = color.NRGBA{R: 220, G: 220, B: 220, A: 255} // Light text
+				editor.HintColor = color.NRGBA{R: 100, G: 100, B: 100, A: 255} // Dim hint
 				return editor.Layout(gtx)
-			})
-		})
+			}),
+		)
 	})
 }
 
