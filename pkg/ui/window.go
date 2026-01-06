@@ -38,7 +38,7 @@ type Window struct {
 }
 
 // NewWindow creates a new launcher window
-func NewWindow(items []input.Item, highlightMatches bool) *Window {
+func NewWindow(items []input.Item, highlightMatches bool, exactMode bool) *Window {
 	w := new(app.Window)
 	w.Option(
 		app.Title("Goose Launcher"),
@@ -64,7 +64,7 @@ func NewWindow(items []input.Item, highlightMatches bool) *Window {
 		matchPositions:   make(map[int][]int),
 		list:             NewList(),
 		searchInput:      NewInput(),
-		matcher:          matcher.NewFuzzyMatcher(false, false),
+		matcher:          matcher.NewFuzzyMatcher(false, exactMode),
 		highlightMatches: highlightMatches,
 	}
 

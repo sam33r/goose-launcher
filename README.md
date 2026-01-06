@@ -44,7 +44,7 @@ echo -e "Item 1\nItem 2\nItem 3" | goose-launcher
 find . -type f | goose-launcher
 
 # Configure Goose
-echo 'LAUNCHER_CMD="goose-launcher -e --no-sort --height=100"' >> ~/.config/goose
+echo 'LAUNCHER_CMD="goose-launcher --no-sort --height=100"' >> ~/.config/goose
 ```
 
 ## Documentation

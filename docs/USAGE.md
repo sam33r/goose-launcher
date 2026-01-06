@@ -23,13 +23,14 @@ Add to `~/.config/goose`:
 
 ```bash
 # Use native launcher instead of fzf
-LAUNCHER_CMD="goose-launcher -e --bind alt-enter:print-query --bind tab:replace-query --bind=enter:replace-query+print-query --bind=ctrl-u:page-up --bind=ctrl-d:page-down --bind=ctrl-alt-u:pos(1) --bind=ctrl-alt-d:pos(-1) --no-sort --height=100 --layout=reverse"
+LAUNCHER_CMD="goose-launcher --bind alt-enter:print-query --bind tab:replace-query --bind=enter:replace-query+print-query --bind=ctrl-u:page-up --bind=ctrl-d:page-down --bind=ctrl-alt-u:pos(1) --bind=ctrl-alt-d:pos(-1) --no-sort --height=100 --layout=reverse"
 ```
 
 ## Command-Line Options
 
 ```
--e, --exact           Exact match mode (substring search)
+-e, --exact           Exact match mode (default: true)
+--fuzzy               Fuzzy match mode (overrides --exact)
 --no-sort             Preserve input order (default: true)
 --height=N            Window height percentage (default: 100)
 --layout=STYLE        Layout style: default|reverse

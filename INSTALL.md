@@ -107,13 +107,14 @@ find . -type f | goose-launcher
 ls | goose-launcher
 
 # With flags
-echo -e "Item 1\nItem 2" | goose-launcher --exact --height=80
+echo -e "Item 1\nItem 2" | goose-launcher --height=80
 ```
 
 ### Available Flags
 
 ```
---exact, -e              Enable exact matching (vs fuzzy)
+--exact, -e              Enable exact matching (default: true)
+--fuzzy                  Enable fuzzy matching (overrides --exact)
 --no-sort                Disable sorting of results
 --height=N               Set window height percentage (0-100)
 --highlight-matches      Highlight matching text (default: true)
@@ -125,13 +126,13 @@ echo -e "Item 1\nItem 2" | goose-launcher --exact --height=80
 Add to `~/.config/goose`:
 
 ```bash
-LAUNCHER_CMD="goose-launcher -e --no-sort --height=100"
+LAUNCHER_CMD="goose-launcher --no-sort --height=100"
 ```
 
 Or use environment variable:
 
 ```bash
-export GOOSE_LAUNCHER="goose-launcher -e --no-sort --height=100"
+export GOOSE_LAUNCHER="goose-launcher --no-sort --height=100"
 ```
 
 ## Uninstallation

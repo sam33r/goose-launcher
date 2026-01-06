@@ -73,8 +73,8 @@ func TestParseFlags_Defaults(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.ExactMode {
-		t.Error("expected ExactMode false by default")
+	if !cfg.ExactMode {
+		t.Error("expected ExactMode true by default")
 	}
 	if !cfg.NoSort {
 		t.Error("expected NoSort true by default (fzf compatibility)")
@@ -84,6 +84,19 @@ func TestParseFlags_Defaults(t *testing.T) {
 	}
 	if !cfg.HighlightMatches {
 		t.Error("expected HighlightMatches true by default")
+	}
+}
+
+func TestParseFlags_Fuzzy(t *testing.T) {
+	args := []string{"--fuzzy"}
+	cfg, err := ParseFlags(args)
+
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.ExactMode {
+		t.Error("expected ExactMode to be false with --fuzzy flag")
 	}
 }
 

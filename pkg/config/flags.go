@@ -19,6 +19,7 @@ type Config struct {
 // ParseFlags parses command-line arguments into Config
 func ParseFlags(args []string) (*Config, error) {
 	cfg := &Config{
+		ExactMode:        true,   // Default: exact match mode (changed from false)
 		NoSort:           true,   // Default: maintain input order (fzf compatibility)
 		Height:           100,    // Default: full height
 		Layout:           "default",
@@ -28,8 +29,10 @@ func ParseFlags(args []string) (*Config, error) {
 	fs := flag.NewFlagSet("goose-launcher", flag.ContinueOnError)
 
 	// Define flags
-	fs.BoolVar(&cfg.ExactMode, "e", false, "exact match mode")
-	fs.BoolVar(&cfg.ExactMode, "exact", false, "exact match mode")
+	var fuzzy bool
+	fs.BoolVar(&cfg.ExactMode, "e", true, "exact match mode (default: true)")
+	fs.BoolVar(&cfg.ExactMode, "exact", true, "exact match mode (default: true)")
+	fs.BoolVar(&fuzzy, "fuzzy", false, "fuzzy match mode (overrides --exact)")
 	fs.BoolVar(&cfg.NoSort, "no-sort", true, "do not sort results")
 	fs.IntVar(&cfg.Height, "height", 100, "window height (percentage)")
 	fs.StringVar(&cfg.Layout, "layout", "default", "layout style (default|reverse)")
@@ -43,6 +46,11 @@ func ParseFlags(args []string) (*Config, error) {
 	// Parse
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+
+	// If --fuzzy is passed, it overrides default ExactMode=true
+	if fuzzy {
+		cfg.ExactMode = false
 	}
 
 	cfg.Keybindings = bindFlags
