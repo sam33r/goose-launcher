@@ -1,11 +1,13 @@
 package ui
 
 import (
+	_ "embed"
 	"fmt"
 	"image/color"
 
 	"gioui.org/app"
-	"gioui.org/font/gofont"
+	"gioui.org/font"
+	"gioui.org/font/opentype"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/layout"
@@ -20,6 +22,12 @@ import (
 	"github.com/sam33r/goose-launcher/pkg/input"
 	"github.com/sam33r/goose-launcher/pkg/matcher"
 )
+
+//go:embed fonts/JetBrainsMono-Regular.ttf
+var jetbrainsMonoRegular []byte
+
+//go:embed fonts/JetBrainsMono-Bold.ttf
+var jetbrainsMonoBold []byte
 
 // Window manages the launcher UI window
 type Window struct {
@@ -48,8 +56,21 @@ func NewWindow(items []input.Item, highlightMatches bool, exactMode bool) *Windo
 
 	theme := material.NewTheme()
 
-	// Configure monospace font (Go Mono from gofont collection)
-	theme.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+	// Configure JetBrains Mono font
+	regular, err := opentype.Parse(jetbrainsMonoRegular)
+	if err != nil {
+		panic(fmt.Sprintf("failed to parse JetBrains Mono Regular: %v", err))
+	}
+	bold, err := opentype.Parse(jetbrainsMonoBold)
+	if err != nil {
+		panic(fmt.Sprintf("failed to parse JetBrains Mono Bold: %v", err))
+	}
+
+	collection := []font.FontFace{
+		{Font: font.Font{Typeface: "JetBrains Mono"}, Face: regular},
+		{Font: font.Font{Typeface: "JetBrains Mono", Weight: font.Bold}, Face: bold},
+	}
+	theme.Shaper = text.NewShaper(text.WithCollection(collection))
 
 	// fzf-style colors: dark background, light text
 	theme.Bg = color.NRGBA{R: 0, G: 0, B: 0, A: 255}           // Black background
