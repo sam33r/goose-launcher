@@ -201,13 +201,32 @@ func (l *List) layoutHighlightedText(gtx layout.Context, theme *material.Theme, 
 func (l *List) MoveUp() {
 	if l.selected > 0 {
 		l.selected--
-		// Request scroll to maintain context above
-		target := l.selected - scrollOffset
-		if target < 0 {
-			target = 0
+		
+		// Ensure context above
+		// If selected item is too close to the top edge (or above it), scroll up
+		targetTop := l.selected - scrollOffset
+		
+		// Current first visible item
+		firstVisible := l.list.Position.First
+		
+		// If we are scrolling up past the current view
+		if targetTop < firstVisible {
+			// Safety: ensure selected is visible at bottom
+			// Lowest allowed Top ensures selected is the last visible item
+			count := l.list.Position.Count
+			if count > 0 {
+				minTop := l.selected - count + 1
+				if targetTop < minTop {
+					targetTop = minTop
+				}
+			}
+
+			if targetTop < 0 {
+				targetTop = 0
+			}
+			l.scrollToItem = targetTop
+			l.needsScroll = true
 		}
-		l.scrollToItem = target
-		l.needsScroll = true
 	}
 }
 
@@ -215,13 +234,41 @@ func (l *List) MoveUp() {
 func (l *List) MoveDown(itemCount int) {
 	if l.selected < itemCount-1 {
 		l.selected++
-		// Request scroll to maintain context below
-		target := l.selected + scrollOffset
-		if target >= itemCount {
-			target = itemCount - 1
+		
+		// Ensure context below
+		// We want the selected item + offset to be visible at the bottom
+		targetBottom := l.selected + scrollOffset
+		
+		count := l.list.Position.Count
+		
+		// Estimate the current last visible item
+		// We treat the last item as potentially clipped, so we ignore it for "safe" visibility
+		lastSafeVisible := l.list.Position.First + count - 2
+		
+		if targetBottom > lastSafeVisible {
+			// If we haven't rendered yet (count=0), just scroll to selected
+			if count == 0 {
+				l.scrollToItem = l.selected
+			} else {
+				// Use +2 to be conservative about partial items
+				newTop := targetBottom - count + 2
+				
+				// Safety: ensure selected is visible at top (don't scroll past selected)
+				if newTop > l.selected {
+					newTop = l.selected
+				}
+
+				if newTop < 0 {
+					newTop = 0
+				}
+				// Don't scroll past end of list
+				if newTop >= itemCount {
+					newTop = itemCount - 1
+				}
+				l.scrollToItem = newTop
+			}
+			l.needsScroll = true
 		}
-		l.scrollToItem = target
-		l.needsScroll = true
 	}
 }
 

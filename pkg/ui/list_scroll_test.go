@@ -4,84 +4,108 @@ import (
 	"testing"
 )
 
-// TestListMoveUp_WithScrollOffset tests that MoveUp triggers scrolling with offset
-func TestListMoveUp_WithScrollOffset(t *testing.T) {
+// TestListMoveUp_WithScrollOffset_TriggersScroll tests that MoveUp triggers scroll when above viewport
+func TestListMoveUp_WithScrollOffset_TriggersScroll(t *testing.T) {
 	list := NewList()
+	// Simulate scrolled state (top item is index 10)
+	list.list.Position.First = 10
+	list.selected = 10
 
-	// Setup a list with 10 items
-	// Assume scrollOffset is 3 (defined in constants)
-
-	// Start at index 5
-	list.selected = 5
-
-	// Move up
+	// MoveUp -> selected becomes 9
+	// scrollOffset is 3
+	// targetTop = 9 - 3 = 6
+	// 6 < 10 (First), so should scroll to 6
 	list.MoveUp()
 
-	// Selected should decrease
-	if list.selected != 4 {
-		t.Errorf("expected selected 4, got %d", list.selected)
+	if list.selected != 9 {
+		t.Errorf("expected selected 9, got %d", list.selected)
 	}
 
-	// Should trigger scroll to maintain context above
-	// If offset is 3, moving to 4 should try to make 4-3 = 1 visible
 	if !list.needsScroll {
-		t.Error("MoveUp should trigger scroll")
+		t.Error("MoveUp should trigger scroll when target is above viewport")
 	}
 
-	expectedScroll := 1 // 4 - 3 = 1
+	expectedScroll := 6
 	if list.scrollToItem != expectedScroll {
 		t.Errorf("expected scrollToItem %d, got %d", expectedScroll, list.scrollToItem)
-	}
-
-	// Move up again to 3
-	list.MoveUp()
-	expectedScroll = 0 // 3 - 3 = 0
-	if list.scrollToItem != expectedScroll {
-		t.Errorf("expected scrollToItem %d, got %d", expectedScroll, list.scrollToItem)
-	}
-
-	// Move up near top (index 1)
-	list.selected = 1
-	list.MoveUp() // to 0
-	expectedScroll = 0 // 0 - 3 < 0, capped at 0
-	if list.scrollToItem != expectedScroll {
-		t.Errorf("expected scrollToItem %d (capped at 0), got %d", expectedScroll, list.scrollToItem)
 	}
 }
 
-// TestListMoveDown_WithScrollOffset tests that MoveDown triggers scrolling with offset
-func TestListMoveDown_WithScrollOffset(t *testing.T) {
+// TestListMoveUp_NoScrollNeeded tests that MoveUp doesn't scroll if context is visible
+func TestListMoveUp_NoScrollNeeded(t *testing.T) {
 	list := NewList()
+	// Top is 0
+	list.list.Position.First = 0
+	list.selected = 5
+
+	// MoveUp -> selected 4
+	// targetTop = 4 - 3 = 1
+	// 1 >= 0. No scroll needed.
+	list.MoveUp()
+
+	if list.needsScroll {
+		t.Error("MoveUp should not trigger scroll when context is already visible")
+	}
+}
+
+// TestListMoveDown_WithScrollOffset_TriggersScroll tests that MoveDown triggers scroll when below viewport
+func TestListMoveDown_WithScrollOffset_TriggersScroll(t *testing.T) {
+	list := NewList()
+	// Simulate 10 items visible, starting at 0
+	list.list.Position.Count = 10
+	list.list.Position.First = 0
+	// Visible range: 0 to 9
+
+	list.selected = 6
+	// MoveDown -> selected 7
+	// scrollOffset = 3
+	// targetBottom = 7 + 3 = 10
+	// LastVisible = 0 + 10 - 1 = 9
+	// 10 > 9. Should scroll.
+	
+	// Expected NewTop = targetBottom - visibleCount + 2 (conservative)
+	// = 10 - 10 + 2 = 2
+	
 	itemCount := 20
-
-	// Start at index 10
-	list.selected = 10
-
-	// Move down
 	list.MoveDown(itemCount)
 
-	// Selected should increase
-	if list.selected != 11 {
-		t.Errorf("expected selected 11, got %d", list.selected)
+	if list.selected != 7 {
+		t.Errorf("expected selected 7, got %d", list.selected)
 	}
 
-	// Should trigger scroll to maintain context below
-	// If offset is 3, moving to 11 should try to make 11+3 = 14 visible
 	if !list.needsScroll {
-		t.Error("MoveDown should trigger scroll")
+		t.Error("MoveDown should trigger scroll when target is below viewport")
 	}
 
-	expectedScroll := 14 // 11 + 3 = 14
+	expectedScroll := 2
 	if list.scrollToItem != expectedScroll {
 		t.Errorf("expected scrollToItem %d, got %d", expectedScroll, list.scrollToItem)
 	}
+}
 
-	// Move down near bottom (index 18 of 20)
-	list.selected = 18
-	list.MoveDown(itemCount) // to 19 (last item)
+// TestListMoveDown_FallbackWhenNotLayouted tests fallback behavior when visibleCount is 0
+func TestListMoveDown_FallbackWhenNotLayouted(t *testing.T) {
+	list := NewList()
+	// visibleCount is 0 (default)
 	
-	expectedScroll = 19 // 19 + 3 > 19, capped at last item
+	list.selected = 5
+	itemCount := 20
+	
+	// MoveDown -> 6
+	// targetBottom = 9
+	// LastVisible unknown. Fallback triggers.
+	
+	list.MoveDown(itemCount)
+	
+	if !list.needsScroll {
+		t.Error("MoveDown should trigger scroll (fallback)")
+	}
+	
+	// Fallback scrolls to selected (6) or selected+offset (9) depending on implementation?
+	// Implementation: "if l.visibleCount == 0 { l.scrollToItem = l.selected }"
+	// So expects 6.
+	expectedScroll := 6
 	if list.scrollToItem != expectedScroll {
-		t.Errorf("expected scrollToItem %d (capped at last), got %d", expectedScroll, list.scrollToItem)
+		t.Errorf("expected scrollToItem %d, got %d", expectedScroll, list.scrollToItem)
 	}
 }
