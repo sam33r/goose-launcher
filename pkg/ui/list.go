@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"image"
 	"image/color"
 
 	"gioui.org/layout"
@@ -75,60 +74,57 @@ func (l *List) Layout(gtx layout.Context, theme *material.Theme, items []input.I
 
 // layoutItem renders a single list item
 func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.Item, index int, selected bool, matchPositions []int, highlightMatches bool) layout.Dimensions {
-	return layout.UniformInset(unit.Dp(2)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+	// Minimal spacing between items
+	return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		// fzf-style colors
 		baseTextColor := color.NRGBA{R: 220, G: 220, B: 220, A: 255}  // Light gray text
 		highlightColor := color.NRGBA{R: 255, G: 100, B: 180, A: 255} // Pink/magenta for matches
-		selectionBgColor := color.NRGBA{R: 40, G: 40, B: 40, A: 255}  // Dark gray background for selection
-		barColor := color.NRGBA{R: 255, G: 0, B: 128, A: 255}         // Pink/magenta bar
-		barWidth := gtx.Dp(unit.Dp(4))
-		barPadding := gtx.Dp(unit.Dp(8))
+		selectionBgColor := color.NRGBA{R: 60, G: 60, B: 60, A: 255}  // Lighter gray background for selection
 
 		if selected {
 			baseTextColor = color.NRGBA{R: 255, G: 255, B: 255, A: 255} // Pure white when selected
 			highlightColor = color.NRGBA{R: 255, G: 180, B: 220, A: 255} // Light pink when selected
 		}
 
-		return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Middle}.Layout(gtx,
-			// Selection bar (if selected)
-			layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-				if !selected {
-					// Reserve space even when not selected for consistent alignment
-					return layout.Dimensions{Size: image.Pt(barWidth+barPadding, 0)}
-				}
+		// Use Stack layout pattern for proper vertical centering with minimum height
+		return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+			minHeight := gtx.Dp(unit.Dp(30))
 
-				// Draw selection bar
-				barSize := image.Pt(barWidth, gtx.Constraints.Max.Y)
-				barStack := clip.Rect{Max: barSize}.Push(gtx.Ops)
-				paint.Fill(gtx.Ops, barColor)
-				barStack.Pop()
+			// Constrain to minimum height
+			gtx.Constraints.Min.Y = minHeight
 
-				return layout.Dimensions{Size: image.Pt(barWidth+barPadding, gtx.Constraints.Max.Y)}
-			}),
+			return layout.Stack{Alignment: layout.W}.Layout(gtx,
+				// Layer 1: Full-width background
+				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
+					if selected {
+						// Use Max.X to span full width, Min.Y for height
+						bgSize := gtx.Constraints.Max
+						bgSize.Y = gtx.Constraints.Min.Y
+						defer clip.Rect{Max: bgSize}.Push(gtx.Ops).Pop()
+						paint.Fill(gtx.Ops, selectionBgColor)
+						return layout.Dimensions{Size: bgSize}
+					}
+					return layout.Dimensions{Size: gtx.Constraints.Min}
+				}),
 
-			// Text content
-			layout.Flexed(1, func(gtx layout.Context) layout.Dimensions {
-				// Draw selection background if selected
-				if selected {
-					bgSize := image.Pt(gtx.Constraints.Max.X, 30) // Fixed height for now
-					bgStack := clip.Rect{Max: bgSize}.Push(gtx.Ops)
-					paint.Fill(gtx.Ops, selectionBgColor)
-					bgStack.Pop()
-				}
-
-				// Render text
-				var textDims layout.Dimensions
-				if highlightMatches && len(matchPositions) > 0 {
-					textDims = l.layoutHighlightedText(gtx, theme, item.Text, matchPositions, baseTextColor, highlightColor)
-				} else {
-					label := material.Body1(theme, item.Text)
-					label.Color = baseTextColor
-					textDims = label.Layout(gtx)
-				}
-
-				return textDims
-			}),
-		)
+				// Layer 2: Text content (Stacked, vertically centered)
+				layout.Stacked(func(gtx layout.Context) layout.Dimensions {
+					// Add vertical padding around text
+					return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+						// Use Center to vertically center the text
+						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+							if highlightMatches && len(matchPositions) > 0 {
+								return l.layoutHighlightedText(gtx, theme, item.Text, matchPositions, baseTextColor, highlightColor)
+							} else {
+								label := material.Body1(theme, item.Text)
+								label.Color = baseTextColor
+								return label.Layout(gtx)
+							}
+						})
+					})
+				}),
+			)
+		})
 	})
 }
 
