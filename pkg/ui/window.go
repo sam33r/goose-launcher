@@ -156,6 +156,30 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 		}
 	}
 
+	// Process Ctrl+J (Down)
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: "J", Required: key.ModCtrl})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			w.list.MoveDown(len(w.filtered))
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+
+	// Process Ctrl+K (Up)
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: "K", Required: key.ModCtrl})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			w.list.MoveUp()
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+
 	// Process Return key (for selection)
 	for {
 		ev, ok := gtx.Event(key.Filter{Name: key.NameReturn})
