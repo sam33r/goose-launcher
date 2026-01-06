@@ -45,6 +45,7 @@ LAUNCHER_CMD="goose-launcher --bind alt-enter:print-query --bind tab:replace-que
 - `↑` / `↓` - Navigate up/down
 - `Ctrl+J` / `Ctrl+K` - Navigate down/up
 - `Enter` - Select item
+- `Shift+Enter` - Output current search query and exit
 - `ESC` - Cancel (exit code 1)
 - `Cmd+Q` - Quit application
 

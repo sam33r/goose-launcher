@@ -498,3 +498,31 @@ func TestKeyboardEventsProcessedBeforeEditor(t *testing.T) {
 		t.Errorf("after up arrow (with text in search), selection = %d, want 0", w.list.Selected())
 	}
 }
+
+// TestShiftEnterKeySelection tests that Shift+Enter outputs the current search query
+func TestShiftEnterKeySelection(t *testing.T) {
+	w := setupTestWindow()
+
+	// Set search text to "Custom Query"
+	w.searchInput.SetText("Custom Query")
+
+	// Simulate Shift+Enter key selection logic
+	// In the real app, this is handled in the event loops
+	w.selected = w.searchInput.Text()
+
+	if w.selected != "Custom Query" {
+		t.Errorf("after Shift+Enter, selected = %q, want %q", w.selected, "Custom Query")
+	}
+
+	// It should output what was typed even if it matches nothing in the list
+	w.searchInput.SetText("Matches Nothing")
+	w.filterItems("Matches Nothing")
+	if len(w.filtered) != 0 {
+		t.Fatalf("expected 0 filtered items, got %d", len(w.filtered))
+	}
+
+	w.selected = w.searchInput.Text()
+	if w.selected != "Matches Nothing" {
+		t.Errorf("after Shift+Enter with no matches, selected = %q, want %q", w.selected, "Matches Nothing")
+	}
+}

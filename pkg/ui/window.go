@@ -180,6 +180,17 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 		}
 	}
 
+	// Process Shift+Return key (for outputting query)
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameReturn, Required: key.ModShift})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			w.selected = w.searchInput.Text()
+		}
+	}
+
 	// Process Return key (for selection)
 	for {
 		ev, ok := gtx.Event(key.Filter{Name: key.NameReturn})
@@ -187,7 +198,11 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 			break
 		}
 		if e, ok := ev.(key.Event); ok && e.State == key.Press {
-			if len(w.filtered) > 0 {
+			if e.Modifiers.Contain(key.ModShift) {
+				// Shift+Enter: Use current query as selection
+				w.selected = w.searchInput.Text()
+			} else if len(w.filtered) > 0 {
+				// Regular Enter: Select current item from filtered list
 				idx := w.list.Selected()
 				w.selected = w.filtered[idx].Raw
 			}
@@ -254,7 +269,7 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 
 		// Check for submit event (Enter key from editor)
 		if _, ok := ev.(widget.SubmitEvent); ok {
-			if len(w.filtered) > 0 {
+			if w.selected == "" && len(w.filtered) > 0 {
 				idx := w.list.Selected()
 				w.selected = w.filtered[idx].Raw
 			}
