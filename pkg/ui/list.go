@@ -13,6 +13,8 @@ import (
 	"github.com/sam33r/goose-launcher/pkg/input"
 )
 
+const scrollOffset = 3 // Keep 3 items context when scrolling
+
 // List displays a scrollable list of items
 type List struct {
 	list           widget.List
@@ -199,8 +201,12 @@ func (l *List) layoutHighlightedText(gtx layout.Context, theme *material.Theme, 
 func (l *List) MoveUp() {
 	if l.selected > 0 {
 		l.selected--
-		// Request scroll to make selected item visible (will happen on next layout)
-		l.scrollToItem = l.selected
+		// Request scroll to maintain context above
+		target := l.selected - scrollOffset
+		if target < 0 {
+			target = 0
+		}
+		l.scrollToItem = target
 		l.needsScroll = true
 	}
 }
@@ -209,8 +215,12 @@ func (l *List) MoveUp() {
 func (l *List) MoveDown(itemCount int) {
 	if l.selected < itemCount-1 {
 		l.selected++
-		// Request scroll to make selected item visible (will happen on next layout)
-		l.scrollToItem = l.selected
+		// Request scroll to maintain context below
+		target := l.selected + scrollOffset
+		if target >= itemCount {
+			target = itemCount - 1
+		}
+		l.scrollToItem = target
 		l.needsScroll = true
 	}
 }
