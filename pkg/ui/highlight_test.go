@@ -322,14 +322,14 @@ func TestCommandLineFlagDefault(t *testing.T) {
 	items := []appinput.Item{{Text: "Test", Raw: "test"}}
 
 	// When created with true (default)
-	w := NewWindow(items, true, false)
+	w := NewWindow(items, true, false, true)
 
 	if !w.highlightMatches {
 		t.Error("NewWindow with highlightMatches=true should enable highlighting")
 	}
 
 	// When created with false (disabled via flag)
-	w2 := NewWindow(items, false, false)
+	w2 := NewWindow(items, false, false, true)
 
 	if w2.highlightMatches {
 		t.Error("NewWindow with highlightMatches=false should disable highlighting")

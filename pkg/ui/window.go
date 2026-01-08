@@ -21,6 +21,7 @@ import (
 
 	"github.com/sam33r/goose-launcher/pkg/input"
 	"github.com/sam33r/goose-launcher/pkg/matcher"
+	"github.com/sam33r/goose-launcher/pkg/ranker"
 )
 
 //go:embed fonts/JetBrainsMono-Regular.ttf
@@ -39,6 +40,8 @@ type Window struct {
 	list             *List
 	searchInput      *Input             // Search input field
 	matcher          *matcher.FuzzyMatcher // Fuzzy matcher
+	ranker           *ranker.Ranker        // Match ranker/scorer
+	rankEnabled      bool                  // Whether to rank results
 	selected         string // Selected item (empty if none)
 	cancelled        bool   // True if user pressed ESC
 	keyTag           bool   // Tag for key events
@@ -46,7 +49,7 @@ type Window struct {
 }
 
 // NewWindow creates a new launcher window
-func NewWindow(items []input.Item, highlightMatches bool, exactMode bool) *Window {
+func NewWindow(items []input.Item, highlightMatches bool, exactMode bool, rankEnabled bool) *Window {
 	w := new(app.Window)
 	w.Option(
 		app.Title("Goose Launcher"),
@@ -86,6 +89,8 @@ func NewWindow(items []input.Item, highlightMatches bool, exactMode bool) *Windo
 		list:             NewList(),
 		searchInput:      NewInput(),
 		matcher:          matcher.NewFuzzyMatcher(false, exactMode),
+		ranker:           ranker.NewRanker(),
+		rankEnabled:      rankEnabled,
 		highlightMatches: highlightMatches,
 	}
 
@@ -132,16 +137,33 @@ func (w *Window) filterItems(query string) {
 		return
 	}
 
+	// First pass: filter matches
 	w.filtered = nil
-	w.matchPositions = make(map[int][]int)
+	tempPositions := make(map[int][]int)
 	filteredIdx := 0
 	for _, item := range w.items {
 		match, positions := w.matcher.Match(query, item)
 		if match {
 			w.filtered = append(w.filtered, item)
-			w.matchPositions[filteredIdx] = positions
+			tempPositions[filteredIdx] = positions
 			filteredIdx++
 		}
+	}
+
+	// Second pass: rank if enabled
+	if w.rankEnabled && len(w.filtered) > 0 {
+		scores := w.ranker.RankMatches(w.filtered, tempPositions, query)
+
+		// Replace filtered items and positions with ranked results
+		w.filtered = make([]input.Item, len(scores))
+		w.matchPositions = make(map[int][]int)
+		for i, score := range scores {
+			w.filtered[i] = score.Item
+			w.matchPositions[i] = score.Positions
+		}
+	} else {
+		// No ranking, just use the filtered results as-is
+		w.matchPositions = tempPositions
 	}
 }
 

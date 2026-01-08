@@ -29,7 +29,7 @@ func main() {
 
 	// Run UI in goroutine, app.Main() on main thread (required for macOS)
 	go func() {
-		window := ui.NewWindow(items, cfg.HighlightMatches, cfg.ExactMode)
+		window := ui.NewWindow(items, cfg.HighlightMatches, cfg.ExactMode, cfg.Rank)
 		selected, err := window.Run()
 
 		if err != nil {

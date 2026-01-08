@@ -17,16 +17,16 @@ func TestParseFlags_Exact(t *testing.T) {
 	}
 }
 
-func TestParseFlags_NoSort(t *testing.T) {
-	args := []string{"--no-sort"}
+func TestParseFlags_Rank(t *testing.T) {
+	args := []string{"--rank"}
 	cfg, err := ParseFlags(args)
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if !cfg.NoSort {
-		t.Error("expected NoSort to be true with --no-sort flag")
+	if !cfg.Rank {
+		t.Error("expected Rank to be true with --rank flag")
 	}
 }
 
@@ -44,7 +44,7 @@ func TestParseFlags_Height(t *testing.T) {
 }
 
 func TestParseFlags_Multiple(t *testing.T) {
-	args := []string{"-e", "--no-sort", "--height=100", "--layout=reverse"}
+	args := []string{"-e", "--rank", "--height=100", "--layout=reverse"}
 	cfg, err := ParseFlags(args)
 
 	if err != nil {
@@ -54,8 +54,8 @@ func TestParseFlags_Multiple(t *testing.T) {
 	if !cfg.ExactMode {
 		t.Error("expected ExactMode true")
 	}
-	if !cfg.NoSort {
-		t.Error("expected NoSort true")
+	if !cfg.Rank {
+		t.Error("expected Rank true")
 	}
 	if cfg.Height != 100 {
 		t.Errorf("expected Height 100, got %d", cfg.Height)
@@ -76,8 +76,8 @@ func TestParseFlags_Defaults(t *testing.T) {
 	if !cfg.ExactMode {
 		t.Error("expected ExactMode true by default")
 	}
-	if !cfg.NoSort {
-		t.Error("expected NoSort true by default (fzf compatibility)")
+	if !cfg.Rank {
+		t.Error("expected Rank true by default")
 	}
 	if cfg.Height != 100 {
 		t.Errorf("expected default Height 100, got %d", cfg.Height)
