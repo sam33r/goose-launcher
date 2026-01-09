@@ -41,3 +41,4 @@ bench-results/
 # Temporary files
 tmp/
 temp/
+benchmark-startup

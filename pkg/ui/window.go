@@ -4,10 +4,10 @@ import (
 	_ "embed"
 	"fmt"
 	"image/color"
+	"time"
 
 	"gioui.org/app"
 	"gioui.org/font"
-	"gioui.org/font/opentype"
 	"gioui.org/io/event"
 	"gioui.org/io/key"
 	"gioui.org/layout"
@@ -19,6 +19,7 @@ import (
 	"gioui.org/widget"
 	"gioui.org/widget/material"
 
+	"github.com/sam33r/goose-launcher/pkg/fontcache"
 	"github.com/sam33r/goose-launcher/pkg/input"
 	"github.com/sam33r/goose-launcher/pkg/matcher"
 	"github.com/sam33r/goose-launcher/pkg/ranker"
@@ -46,10 +47,17 @@ type Window struct {
 	cancelled        bool   // True if user pressed ESC
 	keyTag           bool   // Tag for key events
 	highlightMatches bool   // Whether to highlight matching text
+	metrics          StartupMetrics // Startup performance metrics
+	firstFrame       bool           // Track if first frame rendered
 }
 
 // NewWindow creates a new launcher window
 func NewWindow(items []input.Item, highlightMatches bool, exactMode bool, rankEnabled bool) *Window {
+	var metrics StartupMetrics
+	if BenchmarkMode {
+		metrics.WindowCreationStart = time.Now()
+	}
+
 	w := new(app.Window)
 	w.Option(
 		app.Title("Goose Launcher"),
@@ -59,14 +67,10 @@ func NewWindow(items []input.Item, highlightMatches bool, exactMode bool, rankEn
 
 	theme := material.NewTheme()
 
-	// Configure JetBrains Mono font
-	regular, err := opentype.Parse(jetbrainsMonoRegular)
+	// Configure JetBrains Mono font (using cache)
+	regular, bold, err := fontcache.GetFonts(jetbrainsMonoRegular, jetbrainsMonoBold)
 	if err != nil {
-		panic(fmt.Sprintf("failed to parse JetBrains Mono Regular: %v", err))
-	}
-	bold, err := opentype.Parse(jetbrainsMonoBold)
-	if err != nil {
-		panic(fmt.Sprintf("failed to parse JetBrains Mono Bold: %v", err))
+		panic(fmt.Sprintf("failed to load fonts: %v", err))
 	}
 
 	collection := []font.FontFace{
@@ -92,11 +96,22 @@ func NewWindow(items []input.Item, highlightMatches bool, exactMode bool, rankEn
 		ranker:           ranker.NewRanker(),
 		rankEnabled:      rankEnabled,
 		highlightMatches: highlightMatches,
+		metrics:          metrics,
+		firstFrame:       true,
 	}
 
 	window.searchInput.Focus()
 
+	if BenchmarkMode {
+		window.metrics.WindowCreationEnd = time.Now()
+	}
+
 	return window
+}
+
+// GetMetrics returns the startup metrics for this window
+func (w *Window) GetMetrics() StartupMetrics {
+	return w.metrics
 }
 
 // Run starts the window event loop
@@ -120,6 +135,14 @@ func (w *Window) Run() (string, error) {
 			w.layout(gtx)
 
 			e.Frame(&ops)
+
+			// Track first frame completion
+			if BenchmarkMode && w.firstFrame {
+				w.metrics.FirstFrameTime = time.Now()
+				w.firstFrame = false
+				// Auto-close after first frame in benchmark mode
+				w.cancelled = true
+			}
 
 			// Check if we should close
 			if w.selected != "" || w.cancelled {
@@ -169,6 +192,11 @@ func (w *Window) filterItems(query string) {
 
 // layout renders the window contents
 func (w *Window) layout(gtx layout.Context) layout.Dimensions {
+	// Track first layout timing
+	if BenchmarkMode && w.firstFrame && w.metrics.FirstLayoutTime.IsZero() {
+		w.metrics.FirstLayoutTime = time.Now()
+	}
+
 	// Register for keyboard events FIRST (cover entire window area)
 	// This ensures window-level keys are registered before editor widget
 	area := clip.Rect{Max: gtx.Constraints.Max}.Push(gtx.Ops)

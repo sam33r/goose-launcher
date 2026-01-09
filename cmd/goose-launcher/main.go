@@ -12,6 +12,11 @@ import (
 )
 
 func main() {
+	// Check if benchmark mode is enabled
+	if os.Getenv("BENCHMARK_MODE") == "1" {
+		ui.BenchmarkMode = true
+	}
+
 	// Parse CLI flags
 	cfg, err := config.ParseFlags(os.Args[1:])
 	if err != nil {
@@ -35,6 +40,15 @@ func main() {
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error running window: %v\n", err)
 			os.Exit(1)
+		}
+
+		// Output benchmark metrics if enabled
+		if ui.BenchmarkMode {
+			metrics := window.GetMetrics()
+			fmt.Fprintf(os.Stderr, "BENCHMARK: startup=%.2fms creation=%.2fms layout=%.2fms\n",
+				metrics.GetStartupDuration().Seconds()*1000,
+				metrics.GetCreationDuration().Seconds()*1000,
+				metrics.GetTimeToFirstLayout().Seconds()*1000)
 		}
 
 		// Output selection
