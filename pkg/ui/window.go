@@ -61,8 +61,8 @@ func NewWindow(items []input.Item, highlightMatches bool, exactMode bool, rankEn
 	w := new(app.Window)
 	w.Option(
 		app.Title("Goose Launcher"),
-		app.Size(unit.Dp(800), unit.Dp(600)),
 		app.Decorated(false), // Remove OS title bar
+		app.Maximized.Option(),
 	)
 
 	theme := material.NewTheme()
