@@ -61,9 +61,10 @@ func (i *Input) Text() string {
 	return i.editor.Text()
 }
 
-// SetText sets the input text
+// SetText sets the input text and moves the cursor to the end
 func (i *Input) SetText(text string) {
 	i.editor.SetText(text)
+	i.editor.SetCaret(len([]rune(text)), len([]rune(text)))
 }
 
 // Focus focuses the input field

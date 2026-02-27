@@ -291,6 +291,21 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 		}
 	}
 
+	// Process Tab key (fill input with selected item's raw text)
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: key.NameTab})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			if len(w.filtered) > 0 {
+				idx := w.list.Selected()
+				w.searchInput.SetText(w.filtered[idx].Raw)
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}
+	}
+
 	// Paint dark background (fzf-style)
 	paint.Fill(gtx.Ops, w.theme.Bg)
 
