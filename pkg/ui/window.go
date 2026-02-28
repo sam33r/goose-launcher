@@ -276,6 +276,9 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 				// Regular Enter: Select current item from filtered list
 				idx := w.list.Selected()
 				w.selected = w.filtered[idx].Raw
+			} else if w.searchInput.Text() != "" {
+				// No matches but text in input: output the query text (like Shift+Enter)
+				w.selected = w.searchInput.Text()
 			}
 		}
 	}
@@ -358,6 +361,8 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 			if w.selected == "" && len(w.filtered) > 0 {
 				idx := w.list.Selected()
 				w.selected = w.filtered[idx].Raw
+			} else if w.selected == "" && w.searchInput.Text() != "" {
+				w.selected = w.searchInput.Text()
 			}
 		}
 	}
