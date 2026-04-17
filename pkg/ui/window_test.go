@@ -157,6 +157,45 @@ func TestSearchFiltering(t *testing.T) {
 	}
 }
 
+// TestFilterPreservesStdinOrderWhenRankDisabled verifies that with rankEnabled=false
+// (the --no-sort / --rank=false path), filterItems returns matches in their
+// original stdin order and does not reorder them by match quality.
+func TestFilterPreservesStdinOrderWhenRankDisabled(t *testing.T) {
+	// Stdin order deliberately chosen so any score-based reorder would be visible:
+	// a ranker would typically lift "apple" (shortest, most compact match for "ap")
+	// above "apricot" and "application".
+	items := []appinput.Item{
+		{Text: "apricot", Raw: "apricot"},
+		{Text: "apple", Raw: "apple"},
+		{Text: "banana", Raw: "banana"},
+		{Text: "application", Raw: "application"},
+	}
+
+	w := &Window{
+		theme:          material.NewTheme(),
+		items:          items,
+		filtered:       items,
+		matchPositions: make(map[int][]int),
+		list:           NewList(),
+		searchInput:    NewInput(),
+		matcher:        matcher.NewFuzzyMatcher(false, true), // exact mode, matches app defaults
+		rankEnabled:    false,
+	}
+
+	w.filterItems("ap")
+
+	want := []string{"apricot", "apple", "application"}
+	if len(w.filtered) != len(want) {
+		t.Fatalf("filtered count = %d, want %d", len(w.filtered), len(want))
+	}
+	for i, text := range want {
+		if w.filtered[i].Text != text {
+			t.Errorf("filtered[%d].Text = %q, want %q (stdin order not preserved)",
+				i, w.filtered[i].Text, text)
+		}
+	}
+}
+
 // TestSelectionBoundsAfterFiltering tests that selection stays in bounds after filtering
 func TestSelectionBoundsAfterFiltering(t *testing.T) {
 	w := setupTestWindow()

@@ -100,6 +100,29 @@ func TestParseFlags_Fuzzy(t *testing.T) {
 	}
 }
 
+func TestParseFlags_NoSort(t *testing.T) {
+	cfg, err := ParseFlags([]string{"--no-sort"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Rank {
+		t.Error("expected Rank to be false with --no-sort flag")
+	}
+}
+
+// --no-sort overrides --rank, mirroring how --fuzzy overrides --exact.
+func TestParseFlags_NoSortOverridesRank(t *testing.T) {
+	cfg, err := ParseFlags([]string{"--rank", "--no-sort"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Rank {
+		t.Error("expected Rank to be false when --no-sort is passed with --rank")
+	}
+}
+
 // TestHighlightMatchesDefaultTrue tests that --highlight-matches defaults to true
 func TestHighlightMatchesDefaultTrue(t *testing.T) {
 	cfg, err := ParseFlags([]string{})

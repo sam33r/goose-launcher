@@ -30,10 +30,12 @@ func ParseFlags(args []string) (*Config, error) {
 
 	// Define flags
 	var fuzzy bool
+	var noSort bool
 	fs.BoolVar(&cfg.ExactMode, "e", true, "exact match mode (default: true)")
 	fs.BoolVar(&cfg.ExactMode, "exact", true, "exact match mode (default: true)")
 	fs.BoolVar(&fuzzy, "fuzzy", false, "fuzzy match mode (overrides --exact)")
 	fs.BoolVar(&cfg.Rank, "rank", true, "rank results by match quality (default: true)")
+	fs.BoolVar(&noSort, "no-sort", false, "filter only; preserve input order (disables ranking)")
 	fs.IntVar(&cfg.Height, "height", 100, "window height (percentage)")
 	fs.StringVar(&cfg.Layout, "layout", "default", "layout style (default|reverse)")
 	fs.BoolVar(&cfg.Interactive, "interactive", false, "interactive mode (read stdin continuously)")
@@ -51,6 +53,11 @@ func ParseFlags(args []string) (*Config, error) {
 	// If --fuzzy is passed, it overrides default ExactMode=true
 	if fuzzy {
 		cfg.ExactMode = false
+	}
+
+	// --no-sort forces ranking off regardless of --rank
+	if noSort {
+		cfg.Rank = false
 	}
 
 	cfg.Keybindings = bindFlags
