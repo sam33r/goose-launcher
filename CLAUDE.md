@@ -51,7 +51,7 @@ Packages:
 - `pkg/input` — stdin reader; parses plugin-style separator lines (see `test-integration.sh` for the format).
 - `pkg/matcher` — fuzzy + exact matching. Returns match positions for highlighting. Position tracking adds ~1% overhead vs. boolean match; exact mode is ~2× faster than fuzzy.
 - `pkg/ranker` — scores matches so results can be sorted by quality (toggle with `--rank`).
-- `pkg/config` — flag parsing. Defaults: `ExactMode=true`, `Rank=true`, `HighlightMatches=true`. `--fuzzy` overrides `--exact`. `--bind` is repeatable.
+- `pkg/config` — flag parsing. Defaults: `ExactMode=true`, `Rank=false` (preserve stdin order), `HighlightMatches=true`. `--fuzzy` overrides `--exact`; `--no-sort` is the documented alias for the default `Rank=false` behavior. `--bind` is repeatable.
 - `pkg/ui` — Gio window, search input, list widget, match highlighting. Fonts are JetBrains Mono TTFs embedded via `//go:embed` and served through `pkg/fontcache`.
 - `pkg/fontcache` — on-disk cache so font parsing doesn't dominate startup.
 - `cmd/generate-dataset` — synthetic data generator for tests/benchmarks.

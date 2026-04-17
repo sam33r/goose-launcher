@@ -76,8 +76,8 @@ func TestParseFlags_Defaults(t *testing.T) {
 	if !cfg.ExactMode {
 		t.Error("expected ExactMode true by default")
 	}
-	if !cfg.Rank {
-		t.Error("expected Rank true by default")
+	if cfg.Rank {
+		t.Error("expected Rank false by default (no re-sorting)")
 	}
 	if cfg.Height != 100 {
 		t.Errorf("expected default Height 100, got %d", cfg.Height)

@@ -20,7 +20,7 @@ type Config struct {
 func ParseFlags(args []string) (*Config, error) {
 	cfg := &Config{
 		ExactMode:        true,   // Default: exact match mode (changed from false)
-		Rank:             true,   // Default: enable ranking
+		Rank:             false,  // Default: preserve stdin order (no re-sorting)
 		Height:           100,    // Default: full height
 		Layout:           "default",
 		HighlightMatches: true,   // Default: highlight matches enabled
@@ -34,8 +34,8 @@ func ParseFlags(args []string) (*Config, error) {
 	fs.BoolVar(&cfg.ExactMode, "e", true, "exact match mode (default: true)")
 	fs.BoolVar(&cfg.ExactMode, "exact", true, "exact match mode (default: true)")
 	fs.BoolVar(&fuzzy, "fuzzy", false, "fuzzy match mode (overrides --exact)")
-	fs.BoolVar(&cfg.Rank, "rank", true, "rank results by match quality (default: true)")
-	fs.BoolVar(&noSort, "no-sort", false, "filter only; preserve input order (disables ranking)")
+	fs.BoolVar(&cfg.Rank, "rank", false, "rank results by match quality (default: false)")
+	fs.BoolVar(&noSort, "no-sort", false, "filter only; preserve input order (default; kept for compatibility)")
 	fs.IntVar(&cfg.Height, "height", 100, "window height (percentage)")
 	fs.StringVar(&cfg.Layout, "layout", "default", "layout style (default|reverse)")
 	fs.BoolVar(&cfg.Interactive, "interactive", false, "interactive mode (read stdin continuously)")

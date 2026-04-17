@@ -31,8 +31,8 @@ LAUNCHER_CMD="goose-launcher --bind alt-enter:print-query --bind tab:replace-que
 ```
 -e, --exact           Exact match mode (default: true)
 --fuzzy               Fuzzy match mode (overrides --exact)
---rank                Rank results by match quality (default: true)
---no-sort             Filter only; preserve input order (disables ranking)
+--rank                Rank results by match quality (default: false)
+--no-sort             Filter only; preserve input order (default; kept for compatibility)
 --height=N            Window height percentage (default: 100)
 --layout=STYLE        Layout style: default|reverse
 --bind=KEY:ACTION     Custom key binding (can be specified multiple times)
