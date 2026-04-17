@@ -9,11 +9,14 @@ build:
 	@echo "Building $(BIN_NAME)..."
 	go build $(LDFLAGS) -o $(BIN_NAME) ./cmd/goose-launcher
 
-# Build universal binary for macOS
+# Build universal binary for macOS.
+# Gio's gl_unix.go requires cgo, so each slice needs a cgo-enabled C compiler
+# targeting the right arch. Without -arch, cross-compiling from arm64 → amd64
+# (or vice versa) fails with "undefined: Functions" in gioui.org/internal/gl.
 build-macos:
 	@echo "Building universal macOS binary..."
-	GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BIN_NAME)-amd64 ./cmd/goose-launcher
-	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BIN_NAME)-arm64 ./cmd/goose-launcher
+	CGO_ENABLED=1 CC="clang -arch x86_64" GOOS=darwin GOARCH=amd64 go build $(LDFLAGS) -o $(BIN_NAME)-amd64 ./cmd/goose-launcher
+	CGO_ENABLED=1 CC="clang -arch arm64"  GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o $(BIN_NAME)-arm64 ./cmd/goose-launcher
 	lipo -create -output $(BIN_NAME) $(BIN_NAME)-amd64 $(BIN_NAME)-arm64
 	@rm -f $(BIN_NAME)-amd64 $(BIN_NAME)-arm64
 	@echo "Universal binary created: $(BIN_NAME)"
