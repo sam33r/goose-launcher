@@ -31,6 +31,9 @@ var jetbrainsMonoRegular []byte
 //go:embed fonts/JetBrainsMono-Bold.ttf
 var jetbrainsMonoBold []byte
 
+//go:embed fonts/JetBrainsMono-Italic.ttf
+var jetbrainsMonoItalic []byte
+
 // Window manages the launcher UI window
 type Window struct {
 	app              *app.Window
@@ -68,7 +71,7 @@ func NewWindow(items []input.Item, highlightMatches bool, exactMode bool, rankEn
 	theme := material.NewTheme()
 
 	// Configure JetBrains Mono font (using cache)
-	regular, bold, err := fontcache.GetFonts(jetbrainsMonoRegular, jetbrainsMonoBold)
+	regular, bold, italic, err := fontcache.GetFonts(jetbrainsMonoRegular, jetbrainsMonoBold, jetbrainsMonoItalic)
 	if err != nil {
 		panic(fmt.Sprintf("failed to load fonts: %v", err))
 	}
@@ -76,6 +79,7 @@ func NewWindow(items []input.Item, highlightMatches bool, exactMode bool, rankEn
 	collection := []font.FontFace{
 		{Font: font.Font{Typeface: "JetBrains Mono"}, Face: regular},
 		{Font: font.Font{Typeface: "JetBrains Mono", Weight: font.Bold}, Face: bold},
+		{Font: font.Font{Typeface: "JetBrains Mono", Style: font.Italic}, Face: italic},
 	}
 	theme.Shaper = text.NewShaper(text.WithCollection(collection))
 

@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"io"
 	"strings"
+
+	"github.com/sam33r/goose-launcher/pkg/markup"
 )
 
 const separator = "   . " // 3 spaces + dot + space
@@ -11,12 +13,15 @@ const separator = "   . " // 3 spaces + dot + space
 // Reader reads and parses items from stdin
 type Reader struct {
 	scanner *bufio.Scanner
+	markup  string // "" (off) or "pango"
 }
 
-// NewReader creates a new Reader from an io.Reader
-func NewReader(r io.Reader) *Reader {
+// NewReader creates a new Reader from an io.Reader. The markup argument
+// selects stdin markup parsing; pass "" to disable.
+func NewReader(r io.Reader, markupFormat string) *Reader {
 	return &Reader{
 		scanner: bufio.NewScanner(r),
+		markup:  markupFormat,
 	}
 }
 
@@ -25,23 +30,37 @@ func NewReader(r io.Reader) *Reader {
 func (r *Reader) parseLine(line string, index int) Item {
 	parts := strings.SplitN(line, separator, 2)
 
+	var plugin, text string
 	if len(parts) == 2 {
-		// Has separator: "plugin   . text"
-		return Item{
-			Plugin: strings.TrimSpace(parts[0]),
-			Text:   parts[1],
-			Raw:    line,
-			Index:  index,
-		}
+		plugin = strings.TrimSpace(parts[0])
+		text = parts[1]
+	} else {
+		text = line
 	}
 
-	// No separator: entire line is text
-	return Item{
-		Plugin: "",
-		Text:   line,
+	item := Item{
+		Plugin: plugin,
+		Text:   text,
 		Raw:    line,
 		Index:  index,
 	}
+
+	if r.markup == "pango" {
+		// Parse the text portion. On failure fall back to the literal line —
+		// one bad item shouldn't break the whole launcher.
+		plain, spans, err := markup.Parse(text)
+		if err == nil {
+			item.Text = plain
+			item.Spans = spans
+			if plugin != "" {
+				item.Raw = plugin + separator + plain
+			} else {
+				item.Raw = plain
+			}
+		}
+	}
+
+	return item
 }
 
 // ReadAll reads all items from stdin (blocking)

@@ -48,7 +48,7 @@ files   . /home/user/file2.txt
 plain item without plugin
 chrome   . https://example.com`
 
-	reader := NewReader(strings.NewReader(input))
+	reader := NewReader(strings.NewReader(input), "")
 	items, err := reader.ReadAll()
 
 	if err != nil {
@@ -79,8 +79,51 @@ chrome   . https://example.com`
 	}
 }
 
+func TestReadAll_PangoMarkup(t *testing.T) {
+	input := "files   . <b>bold</b> path\n" +
+		"<i>italic</i> plain\n" +
+		"<unterminated\n"
+
+	reader := NewReader(strings.NewReader(input), "pango")
+	items, err := reader.ReadAll()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("expected 3 items, got %d", len(items))
+	}
+
+	// Markup stripped from Text; Spans populated; Raw reconstructed clean.
+	if items[0].Text != "bold path" {
+		t.Errorf("item[0].Text = %q, want %q", items[0].Text, "bold path")
+	}
+	if items[0].Raw != "files   . bold path" {
+		t.Errorf("item[0].Raw = %q, want selection-clean %q", items[0].Raw, "files   . bold path")
+	}
+	if len(items[0].Spans) == 0 || !items[0].Spans[0].Bold {
+		t.Errorf("item[0].Spans = %+v, want leading bold span", items[0].Spans)
+	}
+
+	// No plugin prefix: Raw is just the stripped text.
+	if items[1].Text != "italic plain" {
+		t.Errorf("item[1].Text = %q", items[1].Text)
+	}
+	if items[1].Raw != "italic plain" {
+		t.Errorf("item[1].Raw = %q, want %q", items[1].Raw, "italic plain")
+	}
+
+	// Malformed falls back to literal text with no Spans — one bad line
+	// must not break the whole launcher.
+	if items[2].Spans != nil {
+		t.Errorf("item[2].Spans = %+v, want nil on parse fallback", items[2].Spans)
+	}
+	if items[2].Text != "<unterminated" {
+		t.Errorf("item[2].Text = %q, want literal fallback", items[2].Text)
+	}
+}
+
 func TestReadAll_EmptyInput(t *testing.T) {
-	reader := NewReader(strings.NewReader(""))
+	reader := NewReader(strings.NewReader(""), "")
 	items, err := reader.ReadAll()
 
 	if err != nil {

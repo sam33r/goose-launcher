@@ -2,6 +2,7 @@ package config
 
 import (
 	"flag"
+	"fmt"
 	"strings"
 )
 
@@ -13,7 +14,8 @@ type Config struct {
 	Layout           string
 	Keybindings      []string // --bind flags (stored for later parsing)
 	Interactive      bool
-	HighlightMatches bool // Highlight matching text in results (default: true)
+	HighlightMatches bool   // Highlight matching text in results (default: true)
+	Markup           string // Stdin markup format: "" (off) or "pango"
 }
 
 // ParseFlags parses command-line arguments into Config
@@ -40,6 +42,7 @@ func ParseFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.Layout, "layout", "default", "layout style (default|reverse)")
 	fs.BoolVar(&cfg.Interactive, "interactive", false, "interactive mode (read stdin continuously)")
 	fs.BoolVar(&cfg.HighlightMatches, "highlight-matches", true, "highlight matching text in results")
+	fs.StringVar(&cfg.Markup, "markup", "", "stdin markup format: pango (default: off)")
 
 	// Custom handling for --bind flags (can appear multiple times)
 	var bindFlags multiFlag
@@ -58,6 +61,14 @@ func ParseFlags(args []string) (*Config, error) {
 	// --no-sort forces ranking off regardless of --rank
 	if noSort {
 		cfg.Rank = false
+	}
+
+	// Reject unknown markup formats early so callers see a clear error.
+	switch cfg.Markup {
+	case "", "pango":
+		// ok
+	default:
+		return nil, fmt.Errorf("unsupported --markup value %q (want \"\" or \"pango\")", cfg.Markup)
 	}
 
 	cfg.Keybindings = bindFlags

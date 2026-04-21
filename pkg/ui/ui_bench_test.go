@@ -246,7 +246,7 @@ func BenchmarkHighlightedTextLayout(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		list.layoutHighlightedText(gtx, theme, text, matchPositions, baseColor, highlightColor)
+		list.layoutStyledText(gtx, theme, text, nil, matchPositions, true, baseColor, highlightColor)
 	}
 }
 

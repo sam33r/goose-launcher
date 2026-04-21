@@ -52,7 +52,8 @@ Packages:
 - `pkg/matcher` — fuzzy + exact matching. Returns match positions for highlighting. Position tracking adds ~1% overhead vs. boolean match; exact mode is ~2× faster than fuzzy.
 - `pkg/ranker` — scores matches so results can be sorted by quality (toggle with `--rank`).
 - `pkg/config` — flag parsing. Defaults: `ExactMode=true`, `Rank=false` (preserve stdin order), `HighlightMatches=true`. `--fuzzy` overrides `--exact`; `--no-sort` is the documented alias for the default `Rank=false` behavior. `--bind` is repeatable.
-- `pkg/ui` — Gio window, search input, list widget, match highlighting. Fonts are JetBrains Mono TTFs embedded via `//go:embed` and served through `pkg/fontcache`.
+- `pkg/ui` — Gio window, search input, list widget, match highlighting. Fonts are JetBrains Mono TTFs embedded via `//go:embed` and served through `pkg/fontcache`. `list.go` composes Pango span styling with match-highlight color in a single per-rune pass.
+- `pkg/markup` — parses a Pango-markup subset (bold, italic, foreground color; `<u>` and `<span background=…>` parsed but not yet rendered) when `--markup=pango` is set. Stripped text is used for matching; selection output never includes markup.
 - `pkg/fontcache` — on-disk cache so font parsing doesn't dominate startup.
 - `cmd/generate-dataset` — synthetic data generator for tests/benchmarks.
 - `cmd/benchmark-startup` — standalone tool that launches the binary repeatedly and aggregates `BENCHMARK_MODE` timings.

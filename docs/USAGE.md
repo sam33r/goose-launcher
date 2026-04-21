@@ -33,6 +33,7 @@ LAUNCHER_CMD="goose-launcher --bind alt-enter:print-query --bind tab:replace-que
 --fuzzy               Fuzzy match mode (overrides --exact)
 --rank                Rank results by match quality (default: false)
 --no-sort             Filter only; preserve input order (default; kept for compatibility)
+--markup=FORMAT       Parse stdin markup; currently only 'pango' is supported
 --height=N            Window height percentage (default: 100)
 --layout=STYLE        Layout style: default|reverse
 --bind=KEY:ACTION     Custom key binding (can be specified multiple times)
@@ -77,6 +78,23 @@ find . -type f | goose-launcher
 ```bash
 ls | goose-launcher -e
 # Only matches exact substrings
+```
+
+## Markup
+
+With `--markup=pango`, each input line may contain a small subset of Pango markup:
+
+- `<b>…</b>` — bold (rendered)
+- `<i>…</i>` — italic (rendered)
+- `<span foreground="#RRGGBB">…</span>` — foreground color (rendered). `fg` is an alias for `foreground`. Named colors (`red`, `green`, `blue`, `yellow`, `cyan`, `magenta`, `white`, `black`, plus `light*`/`dark*` variants) are accepted.
+- `<u>…</u>` — parsed but not yet rendered
+- `<span background="…">…</span>` — parsed but not yet rendered
+
+Matching and selection use the plain (markup-stripped) text, so markup never leaks to stdout. Malformed markup falls back to literal text for that line.
+
+```bash
+printf '<b>ERROR</b>    . connection refused\n<span foreground="#4ec9b0">OK</span>       . ready\n' \
+  | goose-launcher --markup=pango
 ```
 
 ## Troubleshooting

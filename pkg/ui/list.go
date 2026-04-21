@@ -3,6 +3,7 @@ package ui
 import (
 	"image/color"
 
+	"gioui.org/font"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -11,6 +12,7 @@ import (
 	"gioui.org/widget/material"
 
 	"github.com/sam33r/goose-launcher/pkg/input"
+	"github.com/sam33r/goose-launcher/pkg/markup"
 )
 
 const scrollOffset = 3 // Keep 3 items context when scrolling
@@ -115,13 +117,13 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 					return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 						// Use Center to vertically center the text
 						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
-							if highlightMatches && len(matchPositions) > 0 {
-								return l.layoutHighlightedText(gtx, theme, item.Text, matchPositions, baseTextColor, highlightColor)
-							} else {
-								label := material.Body1(theme, item.Text)
-								label.Color = baseTextColor
-								return label.Layout(gtx)
+							applyHighlight := highlightMatches && len(matchPositions) > 0
+							if applyHighlight || len(item.Spans) > 0 {
+								return l.layoutStyledText(gtx, theme, item.Text, item.Spans, matchPositions, applyHighlight, baseTextColor, highlightColor)
 							}
+							label := material.Body1(theme, item.Text)
+							label.Color = baseTextColor
+							return label.Layout(gtx)
 						})
 					})
 				}),
@@ -130,70 +132,106 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 	})
 }
 
-// textSegment represents a text segment with a color
+// textSegment is a run of characters that share identical rendering attributes.
 type textSegment struct {
 	content string
 	color   color.NRGBA
+	bold    bool
+	italic  bool
+	// TODO(markup-underline): add underline bool and draw a 1dp rect under the
+	// segment in layoutStyledText when set.
+	// TODO(markup-bg): add bg *color.NRGBA and paint a background rect behind
+	// the segment when set.
 }
 
-// layoutHighlightedText renders text with specific characters highlighted
-func (l *List) layoutHighlightedText(gtx layout.Context, theme *material.Theme, itemText string, matchPositions []int, baseColor, highlightColor color.NRGBA) layout.Dimensions {
-	// Create a set of match positions for quick lookup
-	matchSet := make(map[int]bool)
-	for _, pos := range matchPositions {
-		matchSet[pos] = true
-	}
+// runeAttrs describes per-rune rendering attributes.
+type runeAttrs struct {
+	color  color.NRGBA
+	bold   bool
+	italic bool
+}
 
-	// Split text into segments with different colors
-	var segments []textSegment
+// layoutStyledText renders text that may combine Pango-markup styling (via
+// spans) and match highlighting. When both apply to the same rune, the match
+// color overrides the span's foreground but bold/italic are preserved.
+func (l *List) layoutStyledText(
+	gtx layout.Context,
+	theme *material.Theme,
+	itemText string,
+	spans []markup.Span,
+	matchPositions []int,
+	applyHighlight bool,
+	baseColor, highlightColor color.NRGBA,
+) layout.Dimensions {
 	runes := []rune(itemText)
-	currentSegment := textSegment{color: baseColor}
+	if len(runes) == 0 {
+		return layout.Dimensions{}
+	}
 
-	for i, r := range runes {
-		isMatch := matchSet[i]
-		shouldStartNewSegment := false
-
-		// Check if we need to start a new segment
-		if len(currentSegment.content) > 0 {
-			// Current segment is highlighted but this char is not, or vice versa
-			prevWasMatch := matchSet[i-1]
-			if prevWasMatch != isMatch {
-				shouldStartNewSegment = true
+	// Step 1: seed per-rune attributes from spans. If spans are missing or
+	// don't cover the full text, fall back to base styling for uncovered runes.
+	attrs := make([]runeAttrs, len(runes))
+	for i := range attrs {
+		attrs[i] = runeAttrs{color: baseColor}
+	}
+	if len(spans) > 0 {
+		cursor := 0
+		for _, span := range spans {
+			fg := baseColor
+			if span.FG != nil {
+				fg = *span.FG
 			}
-		}
-
-		if shouldStartNewSegment {
-			segments = append(segments, currentSegment)
-			if isMatch {
-				currentSegment = textSegment{content: string(r), color: highlightColor}
-			} else {
-				currentSegment = textSegment{content: string(r), color: baseColor}
+			for _, r := range span.Text {
+				if cursor >= len(runes) {
+					break
+				}
+				_ = r
+				attrs[cursor] = runeAttrs{color: fg, bold: span.Bold, italic: span.Italic}
+				cursor++
 			}
-		} else {
-			if isMatch {
-				currentSegment.color = highlightColor
-			}
-			currentSegment.content += string(r)
 		}
 	}
 
-	// Add the last segment
-	if len(currentSegment.content) > 0 {
-		segments = append(segments, currentSegment)
+	// Step 2: overlay match highlighting. Only color changes; bold/italic
+	// established by the markup survive so a matched bold char stays bold.
+	if applyHighlight {
+		for _, pos := range matchPositions {
+			if pos >= 0 && pos < len(attrs) {
+				attrs[pos].color = highlightColor
+			}
+		}
 	}
 
-	// Layout segments horizontally
+	// Step 3: collapse consecutive runes with identical attrs into segments.
+	var segments []textSegment
+	cur := textSegment{content: string(runes[0]), color: attrs[0].color, bold: attrs[0].bold, italic: attrs[0].italic}
+	for i := 1; i < len(runes); i++ {
+		a := attrs[i]
+		if a.color == cur.color && a.bold == cur.bold && a.italic == cur.italic {
+			cur.content += string(runes[i])
+			continue
+		}
+		segments = append(segments, cur)
+		cur = textSegment{content: string(runes[i]), color: a.color, bold: a.bold, italic: a.italic}
+	}
+	segments = append(segments, cur)
+
+	// Step 4: render each segment as a labeled flex child with the right font.
 	children := make([]layout.FlexChild, len(segments))
 	for i, seg := range segments {
-		segment := seg // Capture for closure
+		segment := seg
 		children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
 			label := material.Body1(theme, segment.content)
 			label.Color = segment.color
-			// Don't set TextSize - use theme default for consistency
+			if segment.bold {
+				label.Font.Weight = font.Bold
+			}
+			if segment.italic {
+				label.Font.Style = font.Italic
+			}
 			return label.Layout(gtx)
 		})
 	}
-
 	return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Baseline}.Layout(gtx, children...)
 }
 

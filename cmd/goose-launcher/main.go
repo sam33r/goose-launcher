@@ -25,7 +25,7 @@ func main() {
 	}
 
 	// Read items from stdin
-	reader := input.NewReader(os.Stdin)
+	reader := input.NewReader(os.Stdin, cfg.Markup)
 	items, err := reader.ReadAll()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error reading stdin: %v\n", err)

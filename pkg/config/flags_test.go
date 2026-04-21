@@ -123,6 +123,33 @@ func TestParseFlags_NoSortOverridesRank(t *testing.T) {
 	}
 }
 
+func TestParseFlags_MarkupDefault(t *testing.T) {
+	cfg, err := ParseFlags([]string{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Markup != "" {
+		t.Errorf("Markup = %q, want empty by default", cfg.Markup)
+	}
+}
+
+func TestParseFlags_MarkupPango(t *testing.T) {
+	cfg, err := ParseFlags([]string{"--markup=pango"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Markup != "pango" {
+		t.Errorf("Markup = %q, want %q", cfg.Markup, "pango")
+	}
+}
+
+func TestParseFlags_MarkupRejectsUnknown(t *testing.T) {
+	_, err := ParseFlags([]string{"--markup=html"})
+	if err == nil {
+		t.Fatal("expected error for unsupported markup value")
+	}
+}
+
 // TestHighlightMatchesDefaultTrue tests that --highlight-matches defaults to true
 func TestHighlightMatchesDefaultTrue(t *testing.T) {
 	cfg, err := ParseFlags([]string{})

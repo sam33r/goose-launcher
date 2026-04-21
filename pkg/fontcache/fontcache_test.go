@@ -17,7 +17,7 @@ func TestFontCacheParsing(t *testing.T) {
 		t.Error("cache should be empty initially")
 	}
 
-	_, _, err := GetFonts(mockRegular, mockBold)
+	_, _, _, err := GetFonts(mockRegular, mockBold, nil)
 	// We expect an error because mock bytes aren't valid fonts
 	if err == nil {
 		t.Error("expected error with invalid font bytes")
@@ -30,11 +30,11 @@ func TestFontCacheReuse(t *testing.T) {
 	mockBytes := make([]byte, 100)
 
 	// Parse once (will fail, but that's OK for this test)
-	GetFonts(mockBytes, mockBytes)
+	GetFonts(mockBytes, mockBytes, nil)
 
 	// Second call should return cached result (same error)
-	_, _, err1 := GetFonts(mockBytes, mockBytes)
-	_, _, err2 := GetFonts(mockBytes, mockBytes)
+	_, _, _, err1 := GetFonts(mockBytes, mockBytes, nil)
+	_, _, _, err2 := GetFonts(mockBytes, mockBytes, nil)
 
 	if err1 == nil || err2 == nil {
 		t.Error("expected errors with invalid fonts")
@@ -51,7 +51,7 @@ func TestReset(t *testing.T) {
 	mockBytes := make([]byte, 100)
 
 	// Parse once
-	GetFonts(mockBytes, mockBytes)
+	GetFonts(mockBytes, mockBytes, nil)
 
 	if !IsCached() {
 		t.Error("cache should be populated after first parse")

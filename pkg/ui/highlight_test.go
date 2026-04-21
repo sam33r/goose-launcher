@@ -308,7 +308,7 @@ func TestTextSegmentation(t *testing.T) {
 	highlightColor := color.NRGBA{R: 255, G: 255, B: 255, A: 255} // White
 
 	// Should not crash
-	dims := list.layoutHighlightedText(gtx, theme, text, matchPositions, baseColor, highlightColor)
+	dims := list.layoutStyledText(gtx, theme, text, nil, matchPositions, true, baseColor, highlightColor)
 
 	// Should have non-zero dimensions
 	if dims.Size.X == 0 || dims.Size.Y == 0 {

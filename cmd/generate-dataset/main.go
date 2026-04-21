@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -13,9 +14,41 @@ func main() {
 	count := flag.Int("count", 10000, "number of items to generate")
 	dataType := flag.String("type", "paths", "type of data (paths, commands, mixed)")
 	seed := flag.Int64("seed", time.Now().UnixNano(), "random seed for reproducibility")
+	markup := flag.String("markup", "", "wrap output with markup: pango (default: off)")
 	flag.Parse()
 
 	rand.Seed(*seed)
+
+	if *markup != "" && *markup != "pango" {
+		fmt.Fprintf(os.Stderr, "Unknown markup: %s\n", *markup)
+		os.Exit(1)
+	}
+
+	realStdout := os.Stdout
+	if *markup == "pango" {
+		r, w, err := os.Pipe()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "pipe: %v\n", err)
+			os.Exit(1)
+		}
+		os.Stdout = w
+		bw := bufio.NewWriter(realStdout)
+		done := make(chan struct{})
+		go func() {
+			s := bufio.NewScanner(r)
+			s.Buffer(make([]byte, 1024*1024), 1024*1024)
+			for s.Scan() {
+				fmt.Fprintln(bw, wrapPango(s.Text()))
+			}
+			bw.Flush()
+			close(done)
+		}()
+		defer func() {
+			w.Close()
+			<-done
+			os.Stdout = realStdout
+		}()
+	}
 
 	switch *dataType {
 	case "paths":
@@ -27,6 +60,52 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown type: %s\n", *dataType)
 		os.Exit(1)
+	}
+}
+
+var pangoColors = []string{
+	"#4ec9b0", "#dcdcaa", "#c586c0", "#9cdcfe", "#f48771",
+	"red", "green", "blue", "yellow", "cyan", "magenta",
+	"lightred", "lightgreen", "lightblue", "darkred", "darkgreen",
+}
+
+// wrapPango applies a random markup style to the input line.
+// Distribution is skewed so most items get some styling, exercising the
+// per-rune styled-text layout path.
+func wrapPango(line string) string {
+	if line == "" {
+		return line
+	}
+	switch rand.Intn(10) {
+	case 0:
+		return line // plain
+	case 1, 2:
+		return "<b>" + line + "</b>"
+	case 3:
+		return "<i>" + line + "</i>"
+	case 4:
+		return "<b><i>" + line + "</i></b>"
+	case 5, 6:
+		return fmt.Sprintf(`<span foreground="%s">%s</span>`, pangoColors[rand.Intn(len(pangoColors))], line)
+	case 7:
+		// Partial styling: split line, bold the prefix with a color.
+		cut := len(line) / 3
+		if cut < 1 {
+			cut = 1
+		}
+		return fmt.Sprintf(`<b><span foreground="%s">%s</span></b>%s`,
+			pangoColors[rand.Intn(len(pangoColors))], line[:cut], line[cut:])
+	case 8:
+		// Mixed: italic middle run with a different color.
+		mid := len(line) / 2
+		if mid < 1 {
+			mid = 1
+		}
+		return fmt.Sprintf(`%s<i><span foreground="%s">%s</span></i>`,
+			line[:mid], pangoColors[rand.Intn(len(pangoColors))], line[mid:])
+	default:
+		return fmt.Sprintf(`<span foreground="%s"><b>%s</b></span>`,
+			pangoColors[rand.Intn(len(pangoColors))], line)
 	}
 }
 
