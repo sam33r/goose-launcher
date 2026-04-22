@@ -27,9 +27,11 @@ func generateItems(n int) []input.Item {
 		pattern := patterns[i%len(patterns)]
 		text := fmt.Sprintf(pattern, i)
 		items[i] = input.Item{
-			Text: text,
-			Raw:  text,
+			Text:  text,
+			Raw:   text,
+			Index: i,
 		}
+		items[i].Init()
 	}
 	return items
 }

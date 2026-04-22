@@ -37,9 +37,11 @@ func generateBenchItems(n int) []appinput.Item {
 		pattern := patterns[i%len(patterns)]
 		text := fmt.Sprintf(pattern, i)
 		items[i] = appinput.Item{
-			Text: text,
-			Raw:  text,
+			Text:  text,
+			Raw:   text,
+			Index: i,
 		}
+		items[i].Init()
 	}
 	return items
 }
@@ -57,9 +59,8 @@ func setupBenchContext() layout.Context {
 	}
 }
 
-// BenchmarkWindowFilterItems_Small tests filtering with 100 items
-func BenchmarkWindowFilterItems_Small(b *testing.B) {
-	items := generateBenchItems(100)
+// newBenchWindow constructs a window with the given items.
+func newBenchWindow(items []appinput.Item) *Window {
 	w := &Window{
 		theme:            material.NewTheme(),
 		items:            items,
@@ -71,77 +72,50 @@ func BenchmarkWindowFilterItems_Small(b *testing.B) {
 		highlightMatches: true,
 	}
 	w.theme.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+	return w
+}
 
-	query := "handler"
+// runFilterBench measures the cost of filtering when the query *changes*.
+// We alternate between two queries so the per-frame "query unchanged" cache
+// can't short-circuit the work — that way the bench reflects real keystroke
+// cost, not idle frame cost.
+func runFilterBench(b *testing.B, n int) {
+	w := newBenchWindow(generateBenchItems(n))
+	queries := [2]string{"handler", "handlex"}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		w.filterItems(query)
+		w.filterItems(queries[i&1])
 	}
+}
+
+// BenchmarkWindowFilterItems_Small tests filtering with 100 items
+func BenchmarkWindowFilterItems_Small(b *testing.B) {
+	runFilterBench(b, 100)
 }
 
 // BenchmarkWindowFilterItems_Medium tests filtering with 10k items
 func BenchmarkWindowFilterItems_Medium(b *testing.B) {
-	items := generateBenchItems(10000)
-	w := &Window{
-		theme:            material.NewTheme(),
-		items:            items,
-		filtered:         items,
-		matchPositions:   make(map[int][]int),
-		list:             NewList(),
-		searchInput:      NewInput(),
-		matcher:          matcher.NewFuzzyMatcher(false, false),
-		highlightMatches: true,
-	}
-	w.theme.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
-
-	query := "handler"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		w.filterItems(query)
-	}
+	runFilterBench(b, 10000)
 }
 
 // BenchmarkWindowFilterItems_Large tests filtering with 100k items
 func BenchmarkWindowFilterItems_Large(b *testing.B) {
-	items := generateBenchItems(100000)
-	w := &Window{
-		theme:            material.NewTheme(),
-		items:            items,
-		filtered:         items,
-		matchPositions:   make(map[int][]int),
-		list:             NewList(),
-		searchInput:      NewInput(),
-		matcher:          matcher.NewFuzzyMatcher(false, false),
-		highlightMatches: true,
-	}
-	w.theme.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
-
-	query := "handler"
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		w.filterItems(query)
-	}
+	runFilterBench(b, 100000)
 }
 
 // BenchmarkWindowFilterItems_VeryLarge tests filtering with 1M items
 func BenchmarkWindowFilterItems_VeryLarge(b *testing.B) {
-	items := generateBenchItems(1000000)
-	w := &Window{
-		theme:            material.NewTheme(),
-		items:            items,
-		filtered:         items,
-		matchPositions:   make(map[int][]int),
-		list:             NewList(),
-		searchInput:      NewInput(),
-		matcher:          matcher.NewFuzzyMatcher(false, false),
-		highlightMatches: true,
-	}
-	w.theme.Shaper = text.NewShaper(text.WithCollection(gofont.Collection()))
+	runFilterBench(b, 1000000)
+}
 
-	query := "handler"
+// BenchmarkWindowFilterItems_IdleFrame measures the cost of the "query
+// unchanged" fast path — what every redraw between keystrokes pays.
+func BenchmarkWindowFilterItems_IdleFrame(b *testing.B) {
+	w := newBenchWindow(generateBenchItems(1000000))
+	w.filterItems("handler") // prime the cache
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		w.filterItems(query)
+		w.filterItems("handler")
 	}
 }
 
@@ -280,24 +254,13 @@ func BenchmarkWindowLayout_Complete(b *testing.B) {
 
 // BenchmarkMemoryAllocation_FilterItems tests memory allocation during filtering
 func BenchmarkMemoryAllocation_FilterItems(b *testing.B) {
-	items := generateBenchItems(10000)
-	w := &Window{
-		theme:            material.NewTheme(),
-		items:            items,
-		filtered:         items,
-		matchPositions:   make(map[int][]int),
-		list:             NewList(),
-		searchInput:      NewInput(),
-		matcher:          matcher.NewFuzzyMatcher(false, false),
-		highlightMatches: true,
-	}
-
-	query := "handler"
+	w := newBenchWindow(generateBenchItems(10000))
+	queries := [2]string{"handler", "handlex"}
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		w.filterItems(query)
+		w.filterItems(queries[i&1])
 	}
 }
 

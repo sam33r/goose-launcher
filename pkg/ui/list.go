@@ -2,6 +2,7 @@ package ui
 
 import (
 	"image/color"
+	"strings"
 
 	"gioui.org/font"
 	"gioui.org/layout"
@@ -134,7 +135,7 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 
 // textSegment is a run of characters that share identical rendering attributes.
 type textSegment struct {
-	content string
+	content strings.Builder
 	color   color.NRGBA
 	bold    bool
 	italic  bool
@@ -203,30 +204,35 @@ func (l *List) layoutStyledText(
 	}
 
 	// Step 3: collapse consecutive runes with identical attrs into segments.
-	var segments []textSegment
-	cur := textSegment{content: string(runes[0]), color: attrs[0].color, bold: attrs[0].bold, italic: attrs[0].italic}
+	// strings.Builder avoids the O(n²) cost of `cur.content += string(rune)`.
+	segments := make([]textSegment, 0, 4)
+	segments = append(segments, textSegment{color: attrs[0].color, bold: attrs[0].bold, italic: attrs[0].italic})
+	segments[0].content.WriteRune(runes[0])
 	for i := 1; i < len(runes); i++ {
 		a := attrs[i]
+		cur := &segments[len(segments)-1]
 		if a.color == cur.color && a.bold == cur.bold && a.italic == cur.italic {
-			cur.content += string(runes[i])
+			cur.content.WriteRune(runes[i])
 			continue
 		}
-		segments = append(segments, cur)
-		cur = textSegment{content: string(runes[i]), color: a.color, bold: a.bold, italic: a.italic}
+		segments = append(segments, textSegment{color: a.color, bold: a.bold, italic: a.italic})
+		segments[len(segments)-1].content.WriteRune(runes[i])
 	}
-	segments = append(segments, cur)
 
 	// Step 4: render each segment as a labeled flex child with the right font.
 	children := make([]layout.FlexChild, len(segments))
-	for i, seg := range segments {
-		segment := seg
+	for i := range segments {
+		segText := segments[i].content.String()
+		segColor := segments[i].color
+		segBold := segments[i].bold
+		segItalic := segments[i].italic
 		children[i] = layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			label := material.Body1(theme, segment.content)
-			label.Color = segment.color
-			if segment.bold {
+			label := material.Body1(theme, segText)
+			label.Color = segColor
+			if segBold {
 				label.Font.Weight = font.Bold
 			}
-			if segment.italic {
+			if segItalic {
 				label.Font.Style = font.Italic
 			}
 			return label.Layout(gtx)

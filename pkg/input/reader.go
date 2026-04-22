@@ -58,6 +58,7 @@ func (r *Reader) parseLine(line string, index int) Item {
 		}
 	}
 
+	item.Init()
 	return item
 }
 

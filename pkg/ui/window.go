@@ -52,6 +52,17 @@ type Window struct {
 	highlightMatches bool   // Whether to highlight matching text
 	metrics          StartupMetrics // Startup performance metrics
 	firstFrame       bool           // Track if first frame rendered
+
+	// lastQuery is the query the current filtered/matchPositions reflect.
+	// Layout runs filter on every frame; without this guard we re-filter the
+	// whole input on idle frames (mouse move, focus events) — at 1M items
+	// that costs ~140 ms per redraw.
+	lastQuery   string
+	hasFiltered bool
+	// filteredOwned is the backing slice we control. w.filtered may alias
+	// w.items when the query is empty; we keep filteredOwned separate so
+	// subsequent non-empty queries don't write through into w.items.
+	filteredOwned []input.Item
 }
 
 // NewWindow creates a new launcher window
@@ -156,41 +167,77 @@ func (w *Window) Run() (string, error) {
 	}
 }
 
-// filterItems filters items based on the search query
+// filterItems filters items based on the search query.
+// No-op when called repeatedly with the same query (the layout pass calls this
+// on every frame; we don't want to re-walk a million items on idle redraws).
 func (w *Window) filterItems(query string) {
+	if w.hasFiltered && query == w.lastQuery {
+		return
+	}
+	w.lastQuery = query
+	w.hasFiltered = true
+
 	if query == "" {
 		w.filtered = w.items
-		w.matchPositions = make(map[int][]int)
+		// Reuse the existing map allocation when possible to avoid GC churn.
+		for k := range w.matchPositions {
+			delete(w.matchPositions, k)
+		}
 		return
 	}
 
-	// First pass: filter matches
-	w.filtered = nil
-	tempPositions := make(map[int][]int)
+	// Whether downstream consumers actually need positions; skipping the
+	// allocation cuts ~1 alloc/match for the --highlight-matches=false path.
+	needPositions := w.highlightMatches || w.rankEnabled
+
+	// Reuse the filtered slice's backing array across frames so progressive
+	// typing doesn't reallocate. Always go through filteredOwned — we never
+	// want to write through w.filtered when it's aliased to w.items.
+	filtered := w.filteredOwned[:0]
+
+	// Reuse the positions map; clearing is cheaper than a fresh allocation
+	// for the common case where the result-set size doesn't change much.
+	for k := range w.matchPositions {
+		delete(w.matchPositions, k)
+	}
+
 	filteredIdx := 0
 	for _, item := range w.items {
-		match, positions := w.matcher.Match(query, item)
+		var (
+			match     bool
+			positions []int
+		)
+		if needPositions {
+			match, positions = w.matcher.Match(query, item)
+		} else {
+			match = w.matcher.MatchOnly(query, item)
+		}
 		if match {
-			w.filtered = append(w.filtered, item)
-			tempPositions[filteredIdx] = positions
+			filtered = append(filtered, item)
+			if needPositions {
+				w.matchPositions[filteredIdx] = positions
+			}
 			filteredIdx++
 		}
 	}
+	w.filteredOwned = filtered
+	w.filtered = filtered
 
-	// Second pass: rank if enabled
+	// Optional ranking pass.
 	if w.rankEnabled && len(w.filtered) > 0 {
-		scores := w.ranker.RankMatches(w.filtered, tempPositions, query)
-
-		// Replace filtered items and positions with ranked results
-		w.filtered = make([]input.Item, len(scores))
-		w.matchPositions = make(map[int][]int)
-		for i, score := range scores {
-			w.filtered[i] = score.Item
-			w.matchPositions[i] = score.Positions
+		scores := w.ranker.RankMatches(w.filtered, w.matchPositions, query)
+		filtered = filtered[:0]
+		for k := range w.matchPositions {
+			delete(w.matchPositions, k)
 		}
-	} else {
-		// No ranking, just use the filtered results as-is
-		w.matchPositions = tempPositions
+		for i, score := range scores {
+			filtered = append(filtered, score.Item)
+			if needPositions {
+				w.matchPositions[i] = score.Positions
+			}
+		}
+		w.filteredOwned = filtered
+		w.filtered = filtered
 	}
 }
 
