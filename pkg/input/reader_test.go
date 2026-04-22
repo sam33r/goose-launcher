@@ -93,23 +93,23 @@ func TestReadAll_PangoMarkup(t *testing.T) {
 		t.Fatalf("expected 3 items, got %d", len(items))
 	}
 
-	// Markup stripped from Text; Spans populated; Raw reconstructed clean.
+	// Markup stripped from Text; Spans populated; Raw stays as the original input line.
 	if items[0].Text != "bold path" {
 		t.Errorf("item[0].Text = %q, want %q", items[0].Text, "bold path")
 	}
-	if items[0].Raw != "files   . bold path" {
-		t.Errorf("item[0].Raw = %q, want selection-clean %q", items[0].Raw, "files   . bold path")
+	if items[0].Raw != "files   . <b>bold</b> path" {
+		t.Errorf("item[0].Raw = %q, want original input line %q", items[0].Raw, "files   . <b>bold</b> path")
 	}
 	if len(items[0].Spans) == 0 || !items[0].Spans[0].Bold {
 		t.Errorf("item[0].Spans = %+v, want leading bold span", items[0].Spans)
 	}
 
-	// No plugin prefix: Raw is just the stripped text.
+	// No plugin prefix: Raw is the original input line.
 	if items[1].Text != "italic plain" {
 		t.Errorf("item[1].Text = %q", items[1].Text)
 	}
-	if items[1].Raw != "italic plain" {
-		t.Errorf("item[1].Raw = %q, want %q", items[1].Raw, "italic plain")
+	if items[1].Raw != "<i>italic</i> plain" {
+		t.Errorf("item[1].Raw = %q, want %q", items[1].Raw, "<i>italic</i> plain")
 	}
 
 	// Malformed falls back to literal text with no Spans — one bad line

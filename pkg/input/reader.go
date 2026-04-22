@@ -46,17 +46,15 @@ func (r *Reader) parseLine(line string, index int) Item {
 	}
 
 	if r.markup == "pango" {
-		// Parse the text portion. On failure fall back to the literal line —
-		// one bad item shouldn't break the whole launcher.
+		// Parse the text portion for display. On failure fall back to the
+		// literal line — one bad item shouldn't break the whole launcher.
+		// item.Raw stays as the original input line so the caller gets the
+		// markup-bearing line verbatim — required for exact-line matching
+		// in downstream history filters.
 		plain, spans, err := markup.Parse(text)
 		if err == nil {
 			item.Text = plain
 			item.Spans = spans
-			if plugin != "" {
-				item.Raw = plugin + separator + plain
-			} else {
-				item.Raw = plain
-			}
 		}
 	}
 
