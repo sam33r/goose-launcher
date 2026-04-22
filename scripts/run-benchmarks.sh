@@ -3,7 +3,10 @@
 
 set -e
 
-BENCH_DIR="bench-results"
+# Run from the repo root regardless of where this script was invoked.
+cd "$(dirname "$0")/.."
+
+BENCH_DIR="scripts/bench-results"
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 RESULT_FILE="${BENCH_DIR}/benchmark-${TIMESTAMP}.txt"
 

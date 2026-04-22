@@ -6,6 +6,9 @@
 
 set -e
 
+# Run from the repo root regardless of where this script was invoked.
+cd "$(dirname "$0")/.."
+
 ITERATIONS=${1:-10}
 ITEM_COUNT=${2:-100}
 
