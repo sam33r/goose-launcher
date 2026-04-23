@@ -24,6 +24,7 @@ void* macwin_findWindowByTitle(const char *titleC);
 void  macwin_orderOut(void *win);
 void  macwin_makeKeyAndOrderFront(void *win);
 void  macwin_setAccessoryPolicy(void);
+void  macwin_setLauncherCollectionBehavior(void *win);
 void  macwin_releaseWindow(void *win);
 */
 import "C"
@@ -84,6 +85,20 @@ func (h *Handle) MakeKeyAndOrderFront() {
 		return
 	}
 	C.macwin_makeKeyAndOrderFront(h.ptr)
+}
+
+// SetLauncherCollectionBehavior configures the window to follow the active
+// Space when summoned (MoveToActiveSpace), stay out of window cycling
+// (Transient), and appear over fullscreen apps (FullScreenAuxiliary). Same
+// combination Spotlight, Alfred, and Raycast use.
+//
+// Call once per Handle (typically right after FindWindowByTitle during
+// daemon bootstrap). The setting persists for the window's lifetime.
+func (h *Handle) SetLauncherCollectionBehavior() {
+	if h == nil {
+		return
+	}
+	C.macwin_setLauncherCollectionBehavior(h.ptr)
 }
 
 // Free releases the retained NSWindow reference. Idempotent.

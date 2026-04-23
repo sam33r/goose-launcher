@@ -66,6 +66,28 @@ void macwin_setAccessoryPolicy(void) {
     });
 }
 
+// macwin_setLauncherCollectionBehavior sets NSWindow.collectionBehavior so
+// the window:
+//   - Follows the current Space when summoned (MoveToActiveSpace) — fixes
+//     the bug where macOS switches back to the original Space if the user
+//     summons the launcher from a different one.
+//   - Doesn't show in Cmd+Tab / window cycling and doesn't restore on
+//     relaunch (Transient) — appropriate for an ephemeral launcher.
+//   - Can appear over fullscreen apps (FullScreenAuxiliary) — otherwise
+//     summoning from a fullscreen window does nothing visible.
+//
+// Same combination Spotlight/Alfred/Raycast use.
+void macwin_setLauncherCollectionBehavior(void *win) {
+    if (win == NULL) return;
+    NSWindow *w = (__bridge NSWindow *)win;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [w setCollectionBehavior:
+            NSWindowCollectionBehaviorMoveToActiveSpace |
+            NSWindowCollectionBehaviorTransient |
+            NSWindowCollectionBehaviorFullScreenAuxiliary];
+    });
+}
+
 void macwin_releaseWindow(void *win) {
     if (win != NULL) {
         CFRelease(win);

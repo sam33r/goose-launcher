@@ -115,6 +115,10 @@ func bootstrapWindow() {
 	stateMu.Unlock()
 
 	macwin.SetAccessoryPolicy()
+	// Make the launcher follow the user's current Space when summoned.
+	// Without this, macOS switches back to the Space the window was first
+	// shown in, which is jarring when summoning from another desktop.
+	h.SetLauncherCollectionBehavior()
 	h.OrderOut()
 	close(bootstrapDone)
 	log.Printf("daemon ready; window hidden, accessory policy set")
