@@ -1,84 +1,56 @@
 # Window Startup Benchmark
 
-Measures the window initialization and rendering performance of goose-launcher.
+Measures the launch-to-first-frame latency of goose-launcher with a six-stage
+breakdown.
 
 ## Usage
 
 ```bash
-# Build and run benchmark
-go run ./cmd/benchmark-startup
+# From the repo root:
+go run ./cmd/benchmark-startup                    # defaults: 10 runs, 100 items
+go run ./cmd/benchmark-startup -iterations 30 -items 1000
 
-# Or build first
-go build -o benchmark-startup ./cmd/benchmark-startup
-./benchmark-startup
+# Or via the wrapper script (works from anywhere):
+scripts/benchmark-startup.sh 10 100
+
+# For a single end-to-end wall-clock number using hyperfine:
+scripts/hyperfine-launch.sh 100
 ```
 
-## Metrics Collected
+## What it measures
 
-The benchmark measures three key timing points:
+The benchmark stamps `LAUNCH_START_NS` just before `exec()` and the launcher
+emits a `BENCHMARK:` line on stderr after the first frame. The runner parses
+that line and aggregates min/mean/median/stddev across runs.
 
-1. **Creation Time**: Time from `NewWindow()` start to completion
-   - Includes: theme setup, font parsing, component initialization
+| Stage             | What it covers                                          |
+| ----------------- | ------------------------------------------------------- |
+| `prelaunch`       | dyld + Go runtime init (`exec` -> first user code)      |
+| `stdin`           | reading + parsing items from stdin                      |
+| `creation`        | `NewWindow()` — theme + JetBrains Mono font setup       |
+| `layout`          | `NewWindow` start -> first `layout()` call (Gio cold path) |
+| `startup`         | `NewWindow` start -> first frame submitted              |
+| `total`           | `LAUNCH_START_NS` -> first frame (user-perceived)       |
 
-2. **Layout Time**: Time from window creation to first layout operation
-   - Includes: creation time + time until first `layout()` call
+`prelaunch` is the only number this benchmark *can* measure that the launcher
+itself can't, because the launcher only starts running code after dyld + Go
+runtime init are done.
 
-3. **Startup Time**: Time from window creation to first frame rendered
-   - Includes: layout time + first frame rendering
-   - **This is the total user-perceived latency**
+## How it works
 
-## Baseline Performance (Current)
+1. Builds `./goose-launcher-bench` from `./cmd/goose-launcher`.
+2. For each iteration: stamps `time.Now().UnixNano()` into `LAUNCH_START_NS`,
+   spawns the binary with `BENCHMARK_MODE=1`, pipes test items to stdin.
+3. The binary auto-cancels after the first frame (see
+   `pkg/ui/window.go` Run loop) and prints the `BENCHMARK:` line to stderr.
+4. Runner parses the line, aggregates per stage, prints stats.
 
-```
-Startup Time:
-  Min:     147.60 ms
-  Max:     373.29 ms
-  Mean:    258.34 ms
-  Median:  271.13 ms
-  Std Dev: 66.52 ms
-  Range:   225.69 ms
-```
+## Caveats
 
-## How It Works
-
-1. Builds a special benchmark binary with `BENCHMARK_MODE` enabled
-2. Runs the launcher 10 times with 100 test items
-3. Each run automatically closes after the first frame renders
-4. Timing is instrumented in the window code:
-   - `metrics.WindowCreationStart` - Start of NewWindow()
-   - `metrics.WindowCreationEnd` - End of NewWindow()
-   - `metrics.FirstLayoutTime` - First layout() call
-   - `metrics.FirstFrameTime` - First frame rendered
-
-5. Statistics are calculated across all runs
-
-## Interpreting Results
-
-- **Mean**: Average latency across all runs
-- **Median**: Middle value (less affected by outliers)
-- **Std Dev**: Variability - lower is more consistent
-- **Min**: Best-case performance
-- **Max**: Worst-case performance (may include OS scheduler delays)
-
-## Optimization Tracking
-
-Use this benchmark to validate performance improvements:
-
-```bash
-# Before optimization
-./benchmark-startup > baseline.txt
-
-# After optimization
-./benchmark-startup > optimized.txt
-
-# Compare
-diff baseline.txt optimized.txt
-```
-
-## Known Factors Affecting Performance
-
-- **Font parsing**: ~20-50ms (happens during creation)
-- **Theme initialization**: ~10-20ms
-- **macOS window creation**: ~30-80ms (OS-level)
-- **First frame rendering**: ~10-30ms
-- **OS process scheduling**: Variable (causes high std dev)
+- `prelaunch` has high variance on the first run — dyld cache is cold.
+  Subsequent runs settle to ~30 ms on Apple Silicon. Look at median, not mean.
+- Window creation is dominated by font face parsing (~50 ms steady). The
+  on-disk fontcache (`pkg/fontcache`) helps here but parsing still happens
+  per launch.
+- macOS WindowServer composition latency (frame -> pixels-on-screen) is *not*
+  captured. Use Instruments' "Time Profiler" template if that delta matters.

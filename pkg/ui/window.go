@@ -129,6 +129,24 @@ func (w *Window) GetMetrics() StartupMetrics {
 	return w.metrics
 }
 
+// SetEarlyMetrics seeds the pre-window timestamps that main() captured.
+// Any zero time is left untouched so partial data (e.g. no LAUNCH_START_NS)
+// is fine.
+func (w *Window) SetEarlyMetrics(launch, proc, stdinStart, stdinEnd time.Time) {
+	if !launch.IsZero() {
+		w.metrics.LaunchStart = launch
+	}
+	if !proc.IsZero() {
+		w.metrics.ProcessStart = proc
+	}
+	if !stdinStart.IsZero() {
+		w.metrics.StdinReadStart = stdinStart
+	}
+	if !stdinEnd.IsZero() {
+		w.metrics.StdinReadEnd = stdinEnd
+	}
+}
+
 // Run starts the window event loop
 // Returns selected item or empty string if cancelled
 func (w *Window) Run() (string, error) {

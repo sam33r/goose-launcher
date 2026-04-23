@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"math"
 	"os"
@@ -9,84 +10,106 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
-)
-
-const (
-	iterations = 10
-	itemCount  = 100
+	"strings"
+	"time"
 )
 
 func main() {
+	iterations := flag.Int("iterations", 10, "number of launches to time")
+	itemCount := flag.Int("items", 100, "items piped to launcher per run")
+	keep := flag.Bool("keep-binary", false, "keep ./goose-launcher-bench after run")
+	flag.Parse()
+
 	fmt.Println("=== Window Startup Latency Benchmark ===")
-	fmt.Printf("Iterations: %d\n", iterations)
-	fmt.Printf("Test items: %d\n\n", itemCount)
+	fmt.Printf("Iterations: %d\n", *iterations)
+	fmt.Printf("Test items: %d\n\n", *itemCount)
 
 	// Build fresh binary
-	fmt.Println("Building goose-launcher with benchmark mode...")
-	build := exec.Command("go", "build", "-tags", "benchmark", "-o", "goose-launcher-bench", "./cmd/goose-launcher")
+	fmt.Println("Building goose-launcher...")
+	build := exec.Command("go", "build", "-o", "goose-launcher-bench", "./cmd/goose-launcher")
 	if err := build.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Build failed: %v\n", err)
 		os.Exit(1)
 	}
 
 	// Generate test items
-	generateCmd := exec.Command("sh", "-c", "seq 1 "+fmt.Sprintf("%d", itemCount)+" | awk '{print \"item_\" $1}'")
-	testData, err := generateCmd.Output()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to generate test data: %v\n", err)
-		os.Exit(1)
+	var lines []string
+	for i := 1; i <= *itemCount; i++ {
+		lines = append(lines, fmt.Sprintf("item_%d", i))
 	}
+	testData := []byte(strings.Join(lines, "\n") + "\n")
 
-	results := make([]float64, 0, iterations)
-	creationTimes := make([]float64, 0, iterations)
-	layoutTimes := make([]float64, 0, iterations)
+	// Each captured field maps to a column in the BENCHMARK line.
+	type runStats struct {
+		total, prelaunch, stdinRead, creation, layout, startup []float64
+	}
+	var stats runStats
 
-	metricsRegex := regexp.MustCompile(`BENCHMARK: startup=(\d+\.?\d*)ms creation=(\d+\.?\d*)ms layout=(\d+\.?\d*)ms`)
+	// e.g. "BENCHMARK: total=200.14ms prelaunch=13.61ms stdin=0.01ms creation=50.71ms layout=172.84ms startup=186.49ms items=100"
+	metricsRegex := regexp.MustCompile(
+		`BENCHMARK: total=([\d.]+)ms prelaunch=([\d.]+)ms stdin=([\d.]+)ms creation=([\d.]+)ms layout=([\d.]+)ms startup=([\d.]+)ms`,
+	)
 
 	fmt.Println("Running benchmark...")
-	for i := 0; i < iterations; i++ {
-		// Run launcher with benchmark mode enabled
+	for i := 0; i < *iterations; i++ {
 		cmd := exec.Command("./goose-launcher-bench")
-		cmd.Env = append(os.Environ(), "BENCHMARK_MODE=1")
+		// Stamp launch time *immediately* before exec to capture pre-main work.
+		cmd.Env = append(os.Environ(),
+			"BENCHMARK_MODE=1",
+			fmt.Sprintf("LAUNCH_START_NS=%d", time.Now().UnixNano()),
+		)
 		cmd.Stdin = bytes.NewReader(testData)
 
-		output, _ := cmd.CombinedOutput()
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		_ = cmd.Run()
 
-		// Parse metrics from output
-		matches := metricsRegex.FindStringSubmatch(string(output))
-		if len(matches) == 4 {
-			startup, _ := strconv.ParseFloat(matches[1], 64)
-			creation, _ := strconv.ParseFloat(matches[2], 64)
-			layout, _ := strconv.ParseFloat(matches[3], 64)
-
-			results = append(results, startup)
-			creationTimes = append(creationTimes, creation)
-			layoutTimes = append(layoutTimes, layout)
-
-			fmt.Printf("Run %2d: %.2f ms (creation: %.2f ms, layout: %.2f ms)\n",
-				i+1, startup, creation, layout)
-		} else {
-			fmt.Printf("Run %2d: Failed to parse metrics\n", i+1)
+		matches := metricsRegex.FindStringSubmatch(stderr.String())
+		if len(matches) != 7 {
+			fmt.Printf("Run %2d: failed to parse metrics (stderr=%q)\n", i+1, stderr.String())
+			continue
 		}
+		total := mustFloat(matches[1])
+		prelaunch := mustFloat(matches[2])
+		stdinRead := mustFloat(matches[3])
+		creation := mustFloat(matches[4])
+		layout := mustFloat(matches[5])
+		startup := mustFloat(matches[6])
+
+		stats.total = append(stats.total, total)
+		stats.prelaunch = append(stats.prelaunch, prelaunch)
+		stats.stdinRead = append(stats.stdinRead, stdinRead)
+		stats.creation = append(stats.creation, creation)
+		stats.layout = append(stats.layout, layout)
+		stats.startup = append(stats.startup, startup)
+
+		fmt.Printf("Run %2d: total=%.1fms (prelaunch=%.1f stdin=%.1f creation=%.1f layout=%.1f startup=%.1f)\n",
+			i+1, total, prelaunch, stdinRead, creation, layout, startup)
 	}
 
-	// Print statistics
 	fmt.Println("\n=== Statistics ===")
-	printStats("Startup Time", results)
-	printStats("Creation Time", creationTimes)
-	printStats("Layout Time", layoutTimes)
+	printStats("Total (LAUNCH_START_NS -> first frame)", stats.total)
+	printStats("Pre-launch (dyld + Go runtime init)", stats.prelaunch)
+	printStats("Stdin read", stats.stdinRead)
+	printStats("Window creation (theme + font)", stats.creation)
+	printStats("Time to first layout", stats.layout)
+	printStats("Startup (NewWindow -> first frame)", stats.startup)
 
-	// Cleanup
-	os.Remove("./goose-launcher-bench")
+	if !*keep {
+		_ = os.Remove("./goose-launcher-bench")
+	}
+}
+
+func mustFloat(s string) float64 {
+	v, _ := strconv.ParseFloat(s, 64)
+	return v
 }
 
 func printStats(name string, values []float64) {
 	if len(values) == 0 {
 		return
 	}
-
 	sort.Float64s(values)
-
 	min := values[0]
 	max := values[len(values)-1]
 
@@ -113,5 +136,4 @@ func printStats(name string, values []float64) {
 	fmt.Printf("  Mean:    %.2f ms\n", mean)
 	fmt.Printf("  Median:  %.2f ms\n", median)
 	fmt.Printf("  Std Dev: %.2f ms\n", stddev)
-	fmt.Printf("  Range:   %.2f ms\n", max-min)
 }
