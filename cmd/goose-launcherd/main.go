@@ -2,11 +2,15 @@
 // (cmd/goose-launcher) dials its Unix socket and forwards each user
 // invocation; the daemon runs the launcher window and returns the selection.
 //
-// Phase 1 architecture: one app.Window per request, destroyed at the end.
-// This still amortizes dyld + Go runtime + font init across invocations
-// (~70 ms saved each call) but pays Gio's per-window setup every time.
-// Phase 2 will reuse a single hidden window via the AppKit cgo shim
-// validated in cmd/spike.
+// Phase 2 architecture: ONE app.Window kept alive for the daemon's lifetime.
+// Per-request show/hide goes through pkg/macwin's AppKit cgo shim
+// ([NSWindow orderOut:] / [NSWindow makeKeyAndOrderFront:]). Eliminates
+// per-summon Cocoa first-frame cost (~170 ms) — see DAEMON-RESEARCH.md.
+//
+// Daemon startup briefly flashes a window: Gio creates the NSWindow visible
+// by default; we orderOut as fast as possible after the first FrameEvent so
+// we have a valid NSWindow* to work with. Acceptable since the daemon
+// starts once per login (later: via launchd).
 package main
 
 import (
@@ -19,21 +23,31 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"gioui.org/app"
 
 	"github.com/sam33r/goose-launcher/pkg/config"
 	"github.com/sam33r/goose-launcher/pkg/daemon"
 	"github.com/sam33r/goose-launcher/pkg/input"
+	"github.com/sam33r/goose-launcher/pkg/macwin"
 	"github.com/sam33r/goose-launcher/pkg/ui"
+)
+
+// daemon-wide state. Initialized in main; protected by stateMu where
+// concurrent access is possible.
+var (
+	stateMu sync.Mutex // serializes per-request access to window + handle
+	window  *ui.Window
+	handle  *macwin.Handle
+
+	// Single-flight: only one window onscreen at a time. Multiple clients
+	// queue here.
+	workMu sync.Mutex
 )
 
 func main() {
 	socketPath := daemon.DefaultSocketPath()
-	if v := os.Getenv("GOOSE_LAUNCHER_SOCKET"); v != "" {
-		socketPath = v
-	}
-
 	listener, err := listen(socketPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "goose-launcherd: %v\n", err)
@@ -41,23 +55,58 @@ func main() {
 	}
 	log.Printf("listening on %s", socketPath)
 
-	// Accept loop runs on a goroutine; app.Main owns the main thread.
-	// The work mutex serializes window creation — Gio supports sequential
-	// app.Window instances under one app.Main, but only one at a time.
+	// Create the persistent window. Gio shows it visible by default — we
+	// hide it as soon as the first frame fires (so we have a valid
+	// NSWindow* and the layout cost is paid up-front, not on first user
+	// summon).
+	stateMu.Lock()
+	window = ui.NewWindowEmpty()
+	stateMu.Unlock()
+
+	// Event loop on its own goroutine.
+	go func() {
+		if err := window.RunForever(); err != nil {
+			log.Printf("RunForever returned: %v", err)
+		}
+		os.Exit(0)
+	}()
+
+	// Bootstrap: wait for first frame so NSWindow exists, then locate it,
+	// switch to Accessory policy, hide.
+	go bootstrapWindow()
+
+	// Listener loop on its own goroutine.
 	go acceptLoop(listener)
 
+	// app.Main owns the main thread (macOS requirement).
 	app.Main()
 }
 
-// listen unlinks any stale socket file (left over from a SIGKILL'd daemon)
-// then binds. Mode 0600: only the user can talk to their daemon.
+// bootstrapWindow runs once at daemon startup. Blocks until Gio has made
+// the NSWindow real, then captures the pointer + hides the window.
+func bootstrapWindow() {
+	window.WaitForFirstFrame()
+	log.Printf("first frame done; locating NSWindow")
+
+	h, err := macwin.FindWindowByTitle("Goose Launcher", 2*time.Second)
+	if err != nil {
+		log.Fatalf("bootstrap: %v", err)
+	}
+	stateMu.Lock()
+	handle = h
+	stateMu.Unlock()
+
+	macwin.SetAccessoryPolicy()
+	h.OrderOut()
+	log.Printf("daemon ready; window hidden, accessory policy set")
+}
+
 func listen(path string) (net.Listener, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, fmt.Errorf("mkdir socket dir: %w", err)
 	}
-	// Best-effort cleanup of stale socket. If a live daemon is running,
-	// the bind below will fail — that's how we detect it (single-instance
-	// enforcement comes properly in phase 4 via flock).
+	// Best-effort cleanup of stale socket. Phase 4 adds proper flock-based
+	// single-instance enforcement.
 	_ = os.Remove(path)
 	l, err := net.Listen("unix", path)
 	if err != nil {
@@ -69,11 +118,6 @@ func listen(path string) (net.Listener, error) {
 	}
 	return l, nil
 }
-
-// workMu serializes window creation. macOS + Gio require app.Window to be
-// created/destroyed sequentially under one app.Main; concurrent clients
-// queue here.
-var workMu sync.Mutex
 
 func acceptLoop(l net.Listener) {
 	for {
@@ -91,25 +135,21 @@ func acceptLoop(l net.Listener) {
 
 func handleConn(conn net.Conn) {
 	defer conn.Close()
-
 	req, err := daemon.ReadRequest(conn)
 	if err != nil {
-		// EOF on read just means the client disconnected; log others.
 		if !errors.Is(err, io.EOF) {
 			log.Printf("read request: %v", err)
 		}
 		return
 	}
-
 	resp := serveRequest(req)
 	if err := daemon.WriteResponse(conn, resp); err != nil {
 		log.Printf("write response: %v", err)
 	}
 }
 
-// serveRequest runs the launcher for a single client request. Mirrors what
-// the standalone cmd/goose-launcher main used to do, minus the OS-process
-// boundary.
+// serveRequest runs the launcher for a single client request. Configures
+// the persistent window, shows it, waits for the user, hides it.
 func serveRequest(req *daemon.Request) *daemon.Response {
 	cfg, err := config.ParseFlags(req.Args)
 	if err != nil {
@@ -122,10 +162,30 @@ func serveRequest(req *daemon.Request) *daemon.Response {
 		return &daemon.Response{ExitCode: 2, Error: fmt.Sprintf("read items: %v", err)}
 	}
 
-	// Serialize window creation/run. Phase 2 keeps a single window alive
-	// across requests; for now every request is a fresh app.Window.
+	// Serialize. Concurrent clients queue here; the user only ever sees one
+	// window at a time.
 	workMu.Lock()
 	defer workMu.Unlock()
+
+	// Bootstrap may not have completed yet on the very first request after
+	// daemon startup. Wait for it.
+	stateMu.Lock()
+	w := window
+	h := handle
+	stateMu.Unlock()
+	if w == nil {
+		return &daemon.Response{ExitCode: 1, Error: "daemon: window not initialized"}
+	}
+	if h == nil {
+		// Bootstrap hasn't finished yet — wait for it.
+		w.WaitForFirstFrame()
+		stateMu.Lock()
+		h = handle
+		stateMu.Unlock()
+		if h == nil {
+			return &daemon.Response{ExitCode: 1, Error: "daemon: window handle not available"}
+		}
+	}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -133,16 +193,29 @@ func serveRequest(req *daemon.Request) *daemon.Response {
 		}
 	}()
 
-	log.Printf("serving request: %d items, args=%v", len(items), req.Args)
-	window := ui.NewWindow(items, cfg.HighlightMatches, cfg.ExactMode, cfg.Rank)
-	selected, err := window.Run()
-	if err != nil {
-		log.Printf("window error: %v", err)
-		return &daemon.Response{ExitCode: 1, Error: fmt.Sprintf("window: %v", err)}
-	}
-	log.Printf("request done: selection=%q", selected)
+	w.Configure(items, cfg.HighlightMatches, cfg.ExactMode, cfg.Rank)
+	log.Printf("serving request: %d items", len(items))
 
-	// Match the standalone binary's contract: exit 0 always; selection on
-	// stdout (here: in the response). Cancel = empty selection, exit 0.
+	t0 := time.Now()
+	h.MakeKeyAndOrderFront()
+	w.GioWindow().Invalidate() // Wake event loop — see DAEMON-RESEARCH.md.
+
+	// GOOSE_AUTOCANCEL_MS: if set, auto-cancel the window N ms after show.
+	// For benchmarking show→done latency without human interaction. Off by
+	// default; daemon never cancels the user's window in normal operation.
+	if v := os.Getenv("GOOSE_AUTOCANCEL_MS"); v != "" {
+		if delay, err := time.ParseDuration(v + "ms"); err == nil {
+			go func() {
+				time.Sleep(delay)
+				w.Cancel()
+			}()
+		}
+	}
+
+	selected := w.WaitForSelection()
+	log.Printf("request done in %.1f ms: selection=%q", time.Since(t0).Seconds()*1000, selected)
+
+	h.OrderOut()
+
 	return &daemon.Response{Selection: selected, ExitCode: 0}
 }

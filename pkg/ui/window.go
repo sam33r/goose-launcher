@@ -34,7 +34,19 @@ var jetbrainsMonoBold []byte
 //go:embed fonts/JetBrainsMono-Italic.ttf
 var jetbrainsMonoItalic []byte
 
-// Window manages the launcher UI window
+// Window manages the launcher UI window.
+//
+// Lifecycle modes:
+//
+//   - Standalone (legacy): NewWindow(items, ...) → Run() → exit.
+//     Window is created visible; Run() returns on selection/destroy.
+//   - Daemon (phase 2): NewWindowEmpty() → go RunForever() →
+//     WaitForFirstFrame() → loop {Configure(items,...) → external show →
+//     WaitForSelection() → external hide}. The same *Window object is
+//     reused across many user invocations.
+//
+// Per-request state (items, filtered, selected, etc.) is reset by
+// Configure. Persistent state (app.Window, theme, widgets) survives.
 type Window struct {
 	app              *app.Window
 	theme            *material.Theme
@@ -63,10 +75,31 @@ type Window struct {
 	// w.items when the query is empty; we keep filteredOwned separate so
 	// subsequent non-empty queries don't write through into w.items.
 	filteredOwned []input.Item
+
+	// Daemon-mode signaling. nil channels are fine (no daemon waiting); the
+	// non-blocking sends elsewhere handle that case.
+	requestDone    chan struct{} // closed when current request completes (selection or cancel)
+	firstFrameOnce chan struct{} // closed exactly once after the first FrameEvent
 }
 
-// NewWindow creates a new launcher window
+// NewWindow creates a launcher window pre-loaded with items. Standalone
+// (legacy) entry point — kept for tests. Daemon callers should use
+// NewWindowEmpty + Configure.
 func NewWindow(items []input.Item, highlightMatches bool, exactMode bool, rankEnabled bool) *Window {
+	w := newWindowShell()
+	w.Configure(items, highlightMatches, exactMode, rankEnabled)
+	return w
+}
+
+// NewWindowEmpty creates the persistent daemon window with no items
+// loaded. The caller must invoke Configure before each request.
+func NewWindowEmpty() *Window {
+	return newWindowShell()
+}
+
+// newWindowShell handles the one-time setup that's identical for both
+// constructors: app.Window, theme, fonts, persistent widgets.
+func newWindowShell() *Window {
 	var metrics StartupMetrics
 	if BenchmarkMode {
 		metrics.WindowCreationStart = time.Now()
@@ -100,29 +133,66 @@ func NewWindow(items []input.Item, highlightMatches bool, exactMode bool, rankEn
 	theme.ContrastBg = color.NRGBA{R: 30, G: 30, B: 30, A: 255} // Slightly lighter for contrast
 
 	window := &Window{
-		app:              w,
-		theme:            theme,
-		items:            items,
-		filtered:         items, // Initially show all
-		matchPositions:   make(map[int][]int),
-		list:             NewList(),
-		searchInput:      NewInput(),
-		matcher:          matcher.NewFuzzyMatcher(false, exactMode),
-		ranker:           ranker.NewRanker(),
-		rankEnabled:      rankEnabled,
-		highlightMatches: highlightMatches,
-		metrics:          metrics,
-		firstFrame:       true,
+		app:            w,
+		theme:          theme,
+		matchPositions: make(map[int][]int),
+		list:           NewList(),
+		searchInput:    NewInput(),
+		ranker:         ranker.NewRanker(),
+		metrics:        metrics,
+		firstFrame:     true,
+		firstFrameOnce: make(chan struct{}),
 	}
-
 	window.searchInput.Focus()
 
 	if BenchmarkMode {
 		window.metrics.WindowCreationEnd = time.Now()
 	}
-
 	return window
 }
+
+// Configure prepares the window for a new request. Resets per-request state
+// (items, filter cache, selection, list cursor, search input) without
+// touching the persistent app.Window/theme. Call once between
+// WaitForSelection returns and the next external show.
+//
+// Daemon callers must not call Configure while the event loop is mid-frame
+// for a previous request — the daemon's serialization (workMu) ensures this
+// by draining requests one-at-a-time.
+func (w *Window) Configure(items []input.Item, highlightMatches, exactMode, rankEnabled bool) {
+	w.items = items
+	w.filtered = items
+	for k := range w.matchPositions {
+		delete(w.matchPositions, k)
+	}
+	w.matcher = matcher.NewFuzzyMatcher(false, exactMode)
+	w.rankEnabled = rankEnabled
+	w.highlightMatches = highlightMatches
+
+	// Reset per-request runtime state.
+	w.selected = ""
+	w.cancelled = false
+	w.lastQuery = ""
+	w.hasFiltered = false
+	w.filteredOwned = w.filteredOwned[:0]
+
+	// Reset list cursor + clicked tracker. List has no public reset, but
+	// MoveUp from index 0 is a no-op so we synthesize it.
+	w.list.selected = 0
+	w.list.clickedIdx = -1
+	w.list.scrollToItem = 0
+	w.list.needsScroll = true
+
+	// Clear the search input.
+	w.searchInput.SetText("")
+
+	// Fresh per-request signal channel. Closed when selection/cancel happens.
+	w.requestDone = make(chan struct{})
+}
+
+// GioWindow exposes the underlying *app.Window so callers can call
+// Invalidate() to wake the event loop after externally showing the window.
+func (w *Window) GioWindow() *app.Window { return w.app }
 
 // GetMetrics returns the startup metrics for this window
 func (w *Window) GetMetrics() StartupMetrics {
@@ -147,12 +217,11 @@ func (w *Window) SetEarlyMetrics(launch, proc, stdinStart, stdinEnd time.Time) {
 	}
 }
 
-// Run starts the window event loop
-// Returns selected item or empty string if cancelled
+// Run drives one request to completion. Returns selected item (empty on
+// cancel) when the user picks or dismisses, or returns on DestroyEvent.
+// Standalone (legacy) entry point — daemon callers use RunForever.
 func (w *Window) Run() (string, error) {
 	var ops op.Ops
-
-	// Debug: Force window to be visible
 	w.app.Option(app.Title("Goose Launcher"))
 
 	for {
@@ -160,28 +229,92 @@ func (w *Window) Run() (string, error) {
 		switch e := e.(type) {
 		case app.DestroyEvent:
 			return w.selected, e.Err
-
 		case app.FrameEvent:
 			gtx := app.NewContext(&ops, e)
-
-			// Layout the UI
 			w.layout(gtx)
-
 			e.Frame(&ops)
-
-			// Track first frame completion
-			if BenchmarkMode && w.firstFrame {
-				w.metrics.FirstFrameTime = time.Now()
-				w.firstFrame = false
-				// Auto-close after first frame in benchmark mode
-				w.cancelled = true
-			}
-
-			// Check if we should close
+			w.markFirstFrameDone()
 			if w.selected != "" || w.cancelled {
 				return w.selected, nil
 			}
 		}
+	}
+}
+
+// RunForever pumps events for the lifetime of the daemon. On each request,
+// the daemon calls Configure to reset state and waits on WaitForSelection.
+// This loop signals completion by closing w.requestDone (set in Configure)
+// when selected/cancelled becomes true. Returns only when the OS destroys
+// the window.
+func (w *Window) RunForever() error {
+	var ops op.Ops
+
+	for {
+		e := w.app.Event()
+		switch e := e.(type) {
+		case app.DestroyEvent:
+			return e.Err
+		case app.FrameEvent:
+			gtx := app.NewContext(&ops, e)
+			w.layout(gtx)
+			e.Frame(&ops)
+			w.markFirstFrameDone()
+
+			// Once a request completes, signal the daemon's request handler
+			// (which is parked in WaitForSelection). We close the channel so
+			// concurrent waiters all unblock; the daemon installs a fresh
+			// channel in Configure for the next request.
+			if (w.selected != "" || w.cancelled) && w.requestDone != nil {
+				close(w.requestDone)
+				w.requestDone = nil
+			}
+		}
+	}
+}
+
+// markFirstFrameDone closes firstFrameOnce exactly once. Used by daemon
+// startup to know when the NSWindow exists so it can locate the pointer
+// via [NSApp windows].
+func (w *Window) markFirstFrameDone() {
+	if BenchmarkMode && w.firstFrame {
+		w.metrics.FirstFrameTime = time.Now()
+	}
+	if w.firstFrame {
+		w.firstFrame = false
+		if w.firstFrameOnce != nil {
+			close(w.firstFrameOnce)
+		}
+	}
+}
+
+// WaitForFirstFrame blocks until the first FrameEvent has been processed.
+// Used by the daemon to know when Gio's NSWindow has been created.
+// Idempotent — returns immediately on subsequent calls.
+func (w *Window) WaitForFirstFrame() {
+	if w.firstFrameOnce == nil {
+		return
+	}
+	<-w.firstFrameOnce
+}
+
+// WaitForSelection blocks until the current request completes. Returns the
+// selected item (empty on cancel/dismiss). Must be preceded by a Configure
+// call that installed a fresh requestDone channel.
+func (w *Window) WaitForSelection() string {
+	if w.requestDone != nil {
+		<-w.requestDone
+	}
+	return w.selected
+}
+
+// Cancel dismisses the current request as if the user pressed ESC. Used by
+// the daemon's benchmark path to measure show→done latency without human
+// interaction. Wakes Run/RunForever via Invalidate so the cancelled flag is
+// observed promptly.
+func (w *Window) Cancel() {
+	w.cancelled = true
+	if w.app != nil {
+		w.app.Invalidate()
 	}
 }
 
