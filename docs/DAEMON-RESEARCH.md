@@ -5,6 +5,17 @@ launcher process resident and showing/hiding the window on demand. The
 existing fzf-shaped contract (stdin items, stdout selection, exit 1 on cancel)
 must be preserved exactly so Goose's `LAUNCHER_CMD` integration is unchanged.
 
+## Status
+
+**Phase 0 spike: PASSED (2026-04-22).** See "Phase 0 spike results" at the
+bottom of this doc. Architecture is validated; phase 1 (client/daemon split
++ IPC) is in progress on the `daemon-prototype` branch.
+
+The fork question is **resolved as no fork needed** — `[NSApp windows]` from
+cgo gives us Gio's NSWindow without touching Gio internals. All hide/show
+work happens via AppKit calls + `gioWindow.Invalidate()` to wake Gio's
+event loop after the window is re-shown.
+
 ## TL;DR
 
 **There are three viable paths**, ranked by complexity:
@@ -314,3 +325,62 @@ but no one has demonstrated end-to-end on macOS. Run these in order:
   - `app/os_macos.go:516-534` — `Perform` (only Center/Raise/Close on macOS)
   - `app/os_macos.go:1000-1032` — `newWindow`
   - `app/window.go:638-651` — DestroyEvent handling
+
+## Phase 0 spike results (2026-04-22)
+
+Built `cmd/spike` (since removed): a tiny Gio program that opens one
+window, locates its NSWindow via `[NSApp windows]` from cgo, and cycles
+60× through `orderOut` → `[NSApp setActivationPolicy:Accessory]` → wait →
+`makeKeyAndOrderFront` + `gioWin.Invalidate()`, measuring time from the
+show call to the next `FrameEvent`.
+
+**All success criteria met:**
+
+| Question | Answer |
+|---|---|
+| Does `[NSApp windows]` reliably return Gio's NSWindow? | ✅ Yes; NSApp held 2 windows (1 Gio + 1 Cocoa internal), filtering trivially. |
+| Do `orderOut`/`makeKeyAndOrderFront` work cleanly? | ✅ Yes, but **only if we follow `makeKeyAndOrderFront` with `gioWindow.Invalidate()`**. Without Invalidate, Gio's event loop sits parked in `Window.Event()` because macOS doesn't auto-schedule a paint for a re-shown previously-hidden window. With Invalidate: 60/60 cycles complete cleanly. |
+| Does keyboard focus return after re-show? | ✅ Yes (verified by typing during run). |
+| Does the dock icon stay hidden? | ✅ Yes — calling `setActivationPolicy:Accessory` after Gio sets Regular sticks. No bundle/Info.plist needed for this experiment. |
+| Show-to-frame latency? | **Median 30 ms, min 16 ms**, well under the 50 ms target. |
+
+**Caveat to revisit in phase 3:** ~13% of cycles spiked to ~440 ms (mean
+83 ms, stddev 143 ms in the 5-Hz benchmark). This is artificial pacing
+(real summons are seconds apart, not milliseconds), but if it shows up
+under realistic timings it's worth investigating WindowServer occlusion or
+vsync alignment.
+
+**The architectural decision** (no Gio fork; pure AppKit cgo around
+Gio's window) is now validated, not speculative.
+
+### Required cgo shim (~30 lines)
+
+```objc
+void* findFirstWindow(void) {
+    __block void *result = NULL;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        for (NSWindow *w in [NSApp windows]) {
+            if (w != nil) { result = (void *)CFBridgingRetain(w); break; }
+        }
+    });
+    return result;
+}
+void orderOut(void *win) {
+    NSWindow *w = (__bridge NSWindow *)win;
+    dispatch_sync(dispatch_get_main_queue(), ^{ [w orderOut:nil]; });
+}
+void makeKeyAndOrderFront(void *win) {
+    NSWindow *w = (__bridge NSWindow *)win;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApp activateIgnoringOtherApps:YES];
+        [w makeKeyAndOrderFront:nil];
+    });
+}
+void setAccessoryPolicy(void) {
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+    });
+}
+```
+
+Plus `gioWindow.Invalidate()` from Go after each `makeKeyAndOrderFront`.
