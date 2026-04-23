@@ -21,16 +21,25 @@ matcher work was already cut in the [perf commit][perf] (1ed36bf).
 
 ## Tier 1 — meaningful, modest risk
 
-### 1. Lazy / parallel font loading
+### 1. Lazy / parallel font loading — **TRIED 2026-04-22, no end-to-end win**
 `NewWindow` calls `fontcache.GetFonts(...)` synchronously and registers Regular,
-Bold, Italic before the first frame. Two angles:
-- **Defer Bold + Italic.** Frame 0 only needs Regular (the prompt and item
-  text). Bold/Italic only matter once a Pango-styled item is rendered. Register
-  Regular eagerly; load the others on a goroutine and swap them in via
-  `text.NewShaper` reload. Estimated saving: 30–40 ms of the 56 ms creation
-  cost.
-- **Parallel parse.** Three faces in parallel. Halves the parse cost on cold
-  cache; near-free on warm. Cheap to write.
+Bold, Italic before the first frame. Original hypothesis: defer Bold + Italic
+to a goroutine, parallel-parse all three.
+
+**What we measured:** `opentype.Parse` is only **~500 µs per face** (1.5 ms
+serial total). The 56 ms "creation time" is almost entirely in
+`text.NewShaper`'s call to `fontMap.UseSystemFonts(cacheDir)` — scanning
+every font in `/System/Library/Fonts` and `~/Library/Fonts`.
+
+Adding `text.NoSystemFonts()` collapses creation from ~65 ms to ~2 ms — but
+the same ~63 ms reappears in **first-layout time** because Cocoa's CTFont
+subsystem does the system-font work itself when the first frame is painted.
+End-to-end startup is unchanged (256 ms median both ways). Parallel parse
+alone saves <1 ms (parse isn't the bottleneck).
+
+**Conclusion:** can't sidestep this from the Go side. The OS-managed font
+subsystem owns the cost. Only daemon mode (#4) skips it on subsequent
+invocations.
 
 ### 2. Pre-warm Gio's first-frame on a goroutine
 Between `NewWindow` returning and the first `FrameEvent` arriving, the main
@@ -67,10 +76,11 @@ Significant complexity; only justified if #1–#4 don't get us there.
 
 ## Tier 3 — small but clean
 
-### 6. Skip `app.Maximized.Option()` if not needed
-A maximized window may force the OS into more compositor work. If the launcher
-should be modal/centered (more fzf-like), removing maximize might cut layout
-cost.
+### 6. Skip `app.Maximized.Option()` if not needed — **TRIED 2026-04-22, no win**
+Hypothesis: a maximized window forces the OS into a resize+composite cycle
+that adds latency. **What we measured:** swapping `app.Maximized.Option()`
+for `app.Size(900, 600)` produced no measurable startup change (255 vs 256 ms
+median). Revisit only if profiling identifies window resize as a hot path.
 
 ### 7. Replace `material.Body1` with hand-written text widget
 Material widgets do per-call theming work. The single visible frame's first
@@ -84,9 +94,29 @@ fall back to system font (Gio handles).
 
 ## Recommended next steps (in order)
 
-1. **#1 — Lazy/parallel font loading.** ~1 hour, expected 30+ ms win, no UX change.
-2. **Profile the layout stage** (`go tool pprof`, Gio CPU profiler). Decides
-   whether the 110 ms of layout work is text shaping, OS window creation, or
-   widget tree. Without that data, #2/#5 are guesses.
-3. **#4 — Daemon mode**, after research in `DAEMON-RESEARCH.md` lands.
-   Largest payoff, highest implementation cost.
+After trying #1 and #6 with no measurable wall-clock win, the picture is
+clearer: **almost all of the launch cost lives outside Go-controllable
+code.** The breakdown is approximately:
+
+- ~30 ms: dyld + Go runtime init (fixed)
+- ~63 ms: macOS font subsystem init (Cocoa-side; tries to defer with
+  NoSystemFonts but reappears at first paint)
+- ~170 ms: OS window creation + first-frame composition (Cocoa + GPU)
+- ~few ms: our actual code (theme, widget tree, stdin parse)
+
+This means **incremental tuning won't reach a 10× improvement.** The viable
+options for serious launch-latency reduction are now:
+
+1. **Profile the 230 ms layout stage** (Instruments "Time Profiler" with
+   `--launch`, or Gio's CPU profiler). Confirms exactly where the OS-side
+   cost lives. Without this data we're guessing.
+2. **#4 — Daemon mode** ([`DAEMON-RESEARCH.md`](DAEMON-RESEARCH.md)). The
+   only path that skips the OS-owned font/window costs entirely on every
+   invocation after the first. Validation experiments listed in that doc.
+3. **#5 — Pre-baked first frame.** If daemon mode proves infeasible, this
+   is the fallback for hiding the latency from the user (show stale image
+   while real frame composes).
+
+Tier 2/3 micro-optimizations (#3, #7, #8) remain available but each is
+likely worth single-digit milliseconds — not worth pursuing until profiling
+shows a specific hot path they'd address.
