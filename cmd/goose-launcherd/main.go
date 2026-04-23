@@ -41,12 +41,30 @@ var (
 	window  *ui.Window
 	handle  *macwin.Handle
 
+	// Closed when bootstrap is complete (handle set, accessory policy
+	// applied, window hidden). Requests block on this before serving.
+	bootstrapDone = make(chan struct{})
+
 	// Single-flight: only one window onscreen at a time. Multiple clients
 	// queue here.
 	workMu sync.Mutex
 )
 
 func main() {
+	// Single-instance enforcement. flock auto-releases on process exit, so
+	// no stale-PID problems even after SIGKILL. Take this BEFORE binding the
+	// socket so a second daemon doesn't unlink the first daemon's socket.
+	lock, err := daemon.AcquireLock(daemon.DefaultLockPath())
+	if err != nil {
+		if errors.Is(err, daemon.ErrAlreadyRunning) {
+			fmt.Fprintf(os.Stderr, "goose-launcherd: another daemon is already running\n")
+			os.Exit(0) // Not an error condition for autostart use.
+		}
+		fmt.Fprintf(os.Stderr, "goose-launcherd: %v\n", err)
+		os.Exit(1)
+	}
+	defer lock.Release()
+
 	socketPath := daemon.DefaultSocketPath()
 	listener, err := listen(socketPath)
 	if err != nil {
@@ -98,6 +116,7 @@ func bootstrapWindow() {
 
 	macwin.SetAccessoryPolicy()
 	h.OrderOut()
+	close(bootstrapDone)
 	log.Printf("daemon ready; window hidden, accessory policy set")
 }
 
@@ -167,24 +186,17 @@ func serveRequest(req *daemon.Request) *daemon.Response {
 	workMu.Lock()
 	defer workMu.Unlock()
 
-	// Bootstrap may not have completed yet on the very first request after
-	// daemon startup. Wait for it.
+	// Wait for bootstrap (window created + handle located + accessory
+	// applied). On the autostart path the client connects before bootstrap
+	// finishes; on subsequent requests this is already closed and returns
+	// instantly.
+	<-bootstrapDone
 	stateMu.Lock()
 	w := window
 	h := handle
 	stateMu.Unlock()
-	if w == nil {
-		return &daemon.Response{ExitCode: 1, Error: "daemon: window not initialized"}
-	}
-	if h == nil {
-		// Bootstrap hasn't finished yet — wait for it.
-		w.WaitForFirstFrame()
-		stateMu.Lock()
-		h = handle
-		stateMu.Unlock()
-		if h == nil {
-			return &daemon.Response{ExitCode: 1, Error: "daemon: window handle not available"}
-		}
+	if w == nil || h == nil {
+		return &daemon.Response{ExitCode: 1, Error: "daemon: bootstrap incomplete"}
 	}
 
 	defer func() {
