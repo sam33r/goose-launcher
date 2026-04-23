@@ -1,7 +1,9 @@
 # Binaries (anchored: only the build output at repo root, not the cmd/ source dirs)
 /goose-launcher
 /goose-launcher-*
+/goose-launcherd
 /generate-dataset
+/spike
 *.exe
 *.dll
 *.so
