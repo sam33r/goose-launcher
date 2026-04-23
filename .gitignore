@@ -1,7 +1,7 @@
-# Binaries
-goose-launcher
-goose-launcher-*
-generate-dataset
+# Binaries (anchored: only the build output at repo root, not the cmd/ source dirs)
+/goose-launcher
+/goose-launcher-*
+/generate-dataset
 *.exe
 *.dll
 *.so
@@ -41,4 +41,4 @@ bench-results/
 # Temporary files
 tmp/
 temp/
-benchmark-startup
+/benchmark-startup
