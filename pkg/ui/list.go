@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"image"
 	"image/color"
 	"strings"
 
 	"gioui.org/font"
+	"gioui.org/gesture"
 	"gioui.org/layout"
 	"gioui.org/op/clip"
 	"gioui.org/op/paint"
@@ -20,12 +22,12 @@ const scrollOffset = 3 // Keep 3 items context when scrolling
 
 // List displays a scrollable list of items
 type List struct {
-	list           widget.List
-	selected       int
-	clickedIdx     int  // Index of clicked item (-1 if none)
-	clickTags      []bool // Tags for click tracking (one per potential item)
-	scrollToItem   int  // Item to scroll to (-1 if no scroll needed)
-	needsScroll    bool // True if we need to scroll on next layout
+	list         widget.List
+	selected     int
+	acceptedIdx  int             // Index of accepted (double-clicked) item (-1 if none)
+	clicks       []gesture.Click // One per item; grown lazily in Layout
+	scrollToItem int             // Item to scroll to (-1 if no scroll needed)
+	needsScroll  bool            // True if we need to scroll on next layout
 }
 
 // NewList creates a new list widget
@@ -37,8 +39,7 @@ func NewList() *List {
 			},
 		},
 		selected:     0,
-		clickedIdx:   -1,
-		clickTags:    make([]bool, 1000), // Pre-allocate tags for up to 1000 items
+		acceptedIdx:  -1,
 		scrollToItem: -1,
 		needsScroll:  false,
 	}
@@ -48,6 +49,16 @@ func NewList() *List {
 func (l *List) Layout(gtx layout.Context, theme *material.Theme, items []input.Item, matchPositions map[int][]int, highlightMatches bool) layout.Dimensions {
 	if len(items) == 0 {
 		return layout.Dimensions{}
+	}
+
+	// Ensure per-item click gestures cover the current items slice. Grown
+	// lazily; never shrunk so streaming-stdin appends don't trigger reallocs.
+	if cap(l.clicks) < len(items) {
+		grown := make([]gesture.Click, len(items))
+		copy(grown, l.clicks)
+		l.clicks = grown
+	} else if len(l.clicks) < len(items) {
+		l.clicks = l.clicks[:len(items)]
 	}
 
 	// Ensure selection is in bounds
@@ -130,6 +141,19 @@ func (l *List) applyWheelDelta(prevFirst int, didProgrammaticScroll bool, itemCo
 
 // layoutItem renders a single list item
 func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.Item, index int, selected bool, matchPositions []int, highlightMatches bool) layout.Dimensions {
+	// Drain pending click events for this item from the previous frame.
+	// gesture.Click handles the double-click timing window internally
+	// (200 ms in v0.9.0); we just dispatch each KindClick to handleClickEvent.
+	if index < len(l.clicks) {
+		for {
+			ev, ok := l.clicks[index].Update(gtx.Source)
+			if !ok {
+				break
+			}
+			l.handleClickEvent(index, ev)
+		}
+	}
+
 	// Minimal spacing between items
 	return layout.UniformInset(unit.Dp(1)).Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 		// fzf-style colors
@@ -149,7 +173,7 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 			// Constrain to minimum height
 			gtx.Constraints.Min.Y = minHeight
 
-			return layout.Stack{Alignment: layout.W}.Layout(gtx,
+			dims := layout.Stack{Alignment: layout.W}.Layout(gtx,
 				// Layer 1: Full-width background
 				layout.Expanded(func(gtx layout.Context) layout.Dimensions {
 					if selected {
@@ -180,6 +204,18 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 					})
 				}),
 			)
+
+			// Register the row's hit area so the per-item gesture.Click
+			// receives pointer events. Spans the row's full width and
+			// rendered height. Done after layout so dims.Size.Y is known.
+			if index < len(l.clicks) {
+				rowSize := image.Pt(gtx.Constraints.Max.X, dims.Size.Y)
+				area := clip.Rect{Max: rowSize}.Push(gtx.Ops)
+				l.clicks[index].Add(gtx.Ops)
+				area.Pop()
+			}
+
+			return dims
 		})
 	})
 }
@@ -421,12 +457,33 @@ func (l *List) Selected() int {
 	return l.selected
 }
 
-// GetClicked returns the index of the clicked item, or -1 if none
-func (l *List) GetClicked() int {
-	return l.clickedIdx
+// GetAccepted returns the index of an item the user accepted
+// (double-clicked) since the last ResetAccepted call, or -1 if none.
+// The window layout reads this to write w.selected and complete the request.
+func (l *List) GetAccepted() int {
+	return l.acceptedIdx
 }
 
-// ResetClicked resets the clicked state
-func (l *List) ResetClicked() {
-	l.clickedIdx = -1
+// ResetAccepted clears the accepted state. Called by the window layout
+// after it has consumed the acceptance.
+func (l *List) ResetAccepted() {
+	l.acceptedIdx = -1
+}
+
+// handleClickEvent routes a single gesture.ClickEvent into the list's
+// selection / acceptance state. fzf-style behavior:
+//   - single click (NumClicks=1): move highlight to that row, no exit
+//   - double click (NumClicks>=2): record the row in acceptedIdx so the
+//     window's layout pass exits the request with that selection
+//
+// Press / Cancel events are ignored — only completed clicks (KindClick)
+// move state, otherwise selection would jump on every mouse-down anywhere.
+func (l *List) handleClickEvent(idx int, ev gesture.ClickEvent) {
+	if ev.Kind != gesture.KindClick {
+		return
+	}
+	l.selected = idx
+	if ev.NumClicks >= 2 {
+		l.acceptedIdx = idx
+	}
 }

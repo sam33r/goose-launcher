@@ -217,30 +217,33 @@ func TestSelectionBoundsAfterFiltering(t *testing.T) {
 	}
 }
 
-// TestMouseClickSelection tests that clicking an item selects it
-func TestMouseClickSelection(t *testing.T) {
+// TestMouseDoubleClickAcceptsItem verifies the window-side handler: a
+// double-click in the list (acceptedIdx set) propagates to w.selected so the
+// request completes. Single-click only highlights, which is exercised by
+// the list-level handleClickEvent tests.
+func TestMouseDoubleClickAcceptsItem(t *testing.T) {
 	w := setupTestWindow()
 	gtx := setupTestContext()
 
-	// Layout once to initialize
+	// Layout once to initialize.
 	w.layout(gtx)
 
-	// Simulate click on item 2 (index 2) - this happens in the list layout
-	// The list sets both clickedIdx and selected when clicked
-	w.list.clickedIdx = 2
+	// Simulate a double-click on item 2 having occurred inside the list:
+	// gesture.Click would have called handleClickEvent which set both
+	// selected=2 (from the first click in the pair) and acceptedIdx=2
+	// (from the second).
 	w.list.selected = 2
+	w.list.acceptedIdx = 2
 
-	// Layout should process the click and set w.selected
+	// Layout reads acceptedIdx and writes w.selected so WaitForSelection
+	// can return.
 	w.layout(gtx)
 
-	// Selection in list should be item 2
 	if w.list.Selected() != 2 {
-		t.Errorf("after click on item 2, list selection = %d, want 2", w.list.Selected())
+		t.Errorf("after double-click on item 2, list selection = %d, want 2", w.list.Selected())
 	}
-
-	// Window selected item should be set
 	if w.selected != "item3" {
-		t.Errorf("after click, window selected = %q, want %q", w.selected, "item3")
+		t.Errorf("after double-click, window selected = %q, want %q", w.selected, "item3")
 	}
 }
 

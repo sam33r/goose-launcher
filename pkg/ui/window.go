@@ -219,10 +219,10 @@ func (w *Window) configureCommon(highlightMatches, exactMode, rankEnabled bool) 
 	}
 drained:
 
-	// Reset list cursor + clicked tracker. List has no public reset, but
+	// Reset list cursor + accept tracker. List has no public reset, but
 	// MoveUp from index 0 is a no-op so we synthesize it.
 	w.list.selected = 0
-	w.list.clickedIdx = -1
+	w.list.acceptedIdx = -1
 	w.list.scrollToItem = 0
 	w.list.needsScroll = true
 
@@ -654,11 +654,13 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 	query := w.searchInput.Text()
 	w.filterItems(query)
 
-	// Check for item clicks
-	clickedIdx := w.list.GetClicked()
-	if clickedIdx >= 0 && clickedIdx < len(w.filtered) {
-		w.selected = w.filtered[clickedIdx].Raw
-		w.list.ResetClicked()
+	// Check for item acceptance (double-click). Single clicks only move
+	// the highlight; the request only completes when the user double-clicks
+	// or presses Enter.
+	acceptedIdx := w.list.GetAccepted()
+	if acceptedIdx >= 0 && acceptedIdx < len(w.filtered) {
+		w.selected = w.filtered[acceptedIdx].Raw
+		w.list.ResetAccepted()
 	}
 
 	// Process editor events for text changes

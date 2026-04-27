@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"gioui.org/font/gofont"
+	"gioui.org/gesture"
 	"gioui.org/gpu/headless"
 	"gioui.org/layout"
 	"gioui.org/op"
@@ -76,27 +77,83 @@ func TestListMoveDown(t *testing.T) {
 	}
 }
 
-// TestListClickDetection tests click handling
-func TestListClickDetection(t *testing.T) {
+// TestListAcceptDetection tests the accept (double-click) state machine —
+// GetAccepted returns -1 until something sets it, and ResetAccepted clears it.
+func TestListAcceptDetection(t *testing.T) {
 	list := NewList()
 
-	// Initially no click
-	if list.GetClicked() != -1 {
-		t.Errorf("initial clicked = %d, want -1", list.GetClicked())
+	if list.GetAccepted() != -1 {
+		t.Errorf("initial accepted = %d, want -1", list.GetAccepted())
 	}
 
-	// Simulate click on item 2
-	list.clickedIdx = 2
-
-	if list.GetClicked() != 2 {
-		t.Errorf("after click on item 2, clicked = %d, want 2", list.GetClicked())
+	list.acceptedIdx = 2
+	if list.GetAccepted() != 2 {
+		t.Errorf("after accept on item 2, accepted = %d, want 2", list.GetAccepted())
 	}
 
-	// Reset click
-	list.ResetClicked()
+	list.ResetAccepted()
+	if list.GetAccepted() != -1 {
+		t.Errorf("after ResetAccepted, accepted = %d, want -1", list.GetAccepted())
+	}
+}
 
-	if list.GetClicked() != -1 {
-		t.Errorf("after ResetClicked, clicked = %d, want -1", list.GetClicked())
+// TestHandleClickEvent_SingleClickHighlights — a completed single click on
+// an item should move selection (highlight) but NOT mark the item accepted.
+// Matches fzf's behavior of click-to-preview, double-click-to-confirm.
+func TestHandleClickEvent_SingleClickHighlights(t *testing.T) {
+	list := NewList()
+	list.selected = 0
+
+	list.handleClickEvent(7, gesture.ClickEvent{
+		Kind:      gesture.KindClick,
+		NumClicks: 1,
+	})
+
+	if list.selected != 7 {
+		t.Errorf("after single click on item 7, selected = %d, want 7", list.selected)
+	}
+	if list.acceptedIdx != -1 {
+		t.Errorf("single click should not accept; acceptedIdx = %d, want -1", list.acceptedIdx)
+	}
+}
+
+// TestHandleClickEvent_DoubleClickAccepts — the second click of a double-
+// click (NumClicks=2) accepts the item by writing its index to acceptedIdx.
+// The window layout reads this and exits the request.
+func TestHandleClickEvent_DoubleClickAccepts(t *testing.T) {
+	list := NewList()
+
+	list.handleClickEvent(7, gesture.ClickEvent{
+		Kind:      gesture.KindClick,
+		NumClicks: 2,
+	})
+
+	if list.acceptedIdx != 7 {
+		t.Errorf("after double click, acceptedIdx = %d, want 7", list.acceptedIdx)
+	}
+	if list.selected != 7 {
+		t.Errorf("double click should also leave selection on the row; selected = %d, want 7", list.selected)
+	}
+}
+
+// TestHandleClickEvent_IgnoresPressAndCancel — only KindClick events
+// matter; KindPress (mouse-down before release) and KindCancel must be
+// no-ops, otherwise selection would jump on every press anywhere.
+func TestHandleClickEvent_IgnoresPressAndCancel(t *testing.T) {
+	list := NewList()
+	list.selected = 3
+
+	list.handleClickEvent(0, gesture.ClickEvent{Kind: gesture.KindPress, NumClicks: 1})
+	if list.selected != 3 {
+		t.Errorf("press shouldn't move selection; selected = %d, want 3", list.selected)
+	}
+
+	list.handleClickEvent(0, gesture.ClickEvent{Kind: gesture.KindCancel})
+	if list.selected != 3 {
+		t.Errorf("cancel shouldn't move selection; selected = %d, want 3", list.selected)
+	}
+	if list.acceptedIdx != -1 {
+		t.Errorf("press/cancel must not accept; acceptedIdx = %d, want -1", list.acceptedIdx)
 	}
 }
 

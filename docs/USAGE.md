@@ -66,7 +66,9 @@ user-configurable key bindings.
 - `Cmd+Q` — Quit
 - Mouse wheel — Scrolls the list AND moves the highlighted row by the same
   amount, so the cursor's position within the visible window stays stable.
-- Mouse click on an item — Select it.
+- Single click on a row — Move the highlight to that row (no exit). Useful
+  for previewing without committing.
+- Double click on a row — Accept that row (same as Enter on the highlight).
 
 ## Examples
 
