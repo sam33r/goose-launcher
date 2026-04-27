@@ -122,6 +122,50 @@ func TestReadAll_PangoMarkup(t *testing.T) {
 	}
 }
 
+func TestParseLineFunc_PlainAndPlugin(t *testing.T) {
+	// Package-level ParseLine: callable without constructing a Reader.
+	plain := ParseLine("just text", 7, "")
+	if plain.Plugin != "" || plain.Text != "just text" || plain.Index != 7 {
+		t.Errorf("plain item: %+v", plain)
+	}
+	if plain.Raw != "just text" {
+		t.Errorf("plain.Raw = %q, want %q", plain.Raw, "just text")
+	}
+	if !plain.ASCII {
+		t.Errorf("plain.ASCII should be true (Init was called)")
+	}
+
+	withPlugin := ParseLine("files   . /home/user/x.txt", 0, "")
+	if withPlugin.Plugin != "files" {
+		t.Errorf("plugin: got %q, want %q", withPlugin.Plugin, "files")
+	}
+	if withPlugin.Text != "/home/user/x.txt" {
+		t.Errorf("text: got %q", withPlugin.Text)
+	}
+}
+
+func TestParseLineFunc_PangoMarkup(t *testing.T) {
+	item := ParseLine("<b>bold</b> path", 0, "pango")
+	if item.Text != "bold path" {
+		t.Errorf("Text = %q, want %q", item.Text, "bold path")
+	}
+	if item.Raw != "<b>bold</b> path" {
+		t.Errorf("Raw should preserve markup, got %q", item.Raw)
+	}
+	if len(item.Spans) == 0 || !item.Spans[0].Bold {
+		t.Errorf("Spans = %+v, want leading bold span", item.Spans)
+	}
+
+	// Malformed falls back to literal.
+	bad := ParseLine("<unterminated", 0, "pango")
+	if bad.Spans != nil {
+		t.Errorf("malformed Spans = %+v, want nil", bad.Spans)
+	}
+	if bad.Text != "<unterminated" {
+		t.Errorf("malformed Text = %q, want literal fallback", bad.Text)
+	}
+}
+
 func TestReadAll_EmptyInput(t *testing.T) {
 	reader := NewReader(strings.NewReader(""), "")
 	items, err := reader.ReadAll()

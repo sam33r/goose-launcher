@@ -13,9 +13,8 @@ type Config struct {
 	Height           int
 	Layout           string
 	Keybindings      []string // --bind flags (stored for later parsing)
-	Interactive      bool
-	HighlightMatches bool   // Highlight matching text in results (default: true)
-	Markup           string // Stdin markup format: "" (off) or "pango"
+	HighlightMatches bool     // Highlight matching text in results (default: true)
+	Markup           string   // Stdin markup format: "" (off) or "pango"
 }
 
 // ParseFlags parses command-line arguments into Config
@@ -40,7 +39,6 @@ func ParseFlags(args []string) (*Config, error) {
 	fs.BoolVar(&noSort, "no-sort", false, "filter only; preserve input order (default; kept for compatibility)")
 	fs.IntVar(&cfg.Height, "height", 100, "window height (percentage)")
 	fs.StringVar(&cfg.Layout, "layout", "default", "layout style (default|reverse)")
-	fs.BoolVar(&cfg.Interactive, "interactive", false, "interactive mode (read stdin continuously)")
 	fs.BoolVar(&cfg.HighlightMatches, "highlight-matches", true, "highlight matching text in results")
 	fs.StringVar(&cfg.Markup, "markup", "", "stdin markup format: pango (default: off)")
 

@@ -1,18 +1,28 @@
 // Package daemon defines the IPC protocol between the goose-launcher CLI
 // client and the resident goose-launcherd daemon process.
 //
-// Wire format (one request per connection):
+// Wire format
 //
-//	client → daemon: WriteFrame(Request)
-//	daemon → client: WriteFrame(Response)
+// Each message is a single framed envelope:
+//
+//	[1-byte tag][4-byte big-endian length N][N payload bytes]
+//
+// Payload is JSON-encoded for tagged message bodies (Hello, StdinChunk,
+// Response). MsgStdinEOF carries no payload (length=0).
+//
+// Conversation shape (one connection per client invocation):
+//
+//	client -> daemon : MsgHello
+//	client -> daemon : MsgStdinChunk*  (zero or more, batched)
+//	client -> daemon : MsgStdinEOF
+//	daemon -> client : MsgResponse
 //	connection closed
 //
-// Each frame is a 4-byte big-endian length followed by JSON-encoded payload.
-// Stdin is carried verbatim inside Request.Stdin — JSON handles arbitrary
-// strings (including embedded newlines) via escapes; the cost is ~1.3x size
-// inflation in pathological cases. The launcher's typical stdin is small
-// enough (a few hundred KB) that this is a non-issue. If we ever need to
-// stream gigabytes, switch to a length-prefixed binary frame for stdin.
+// The daemon shows the window as soon as Hello arrives — items stream in
+// over the chunk frames while the user types. Selection / cancel completes
+// the request even before EOF; the daemon then closes the socket, which
+// signals the client's stdin-forwarder goroutine (and the upstream producer
+// via SIGPIPE) to terminate.
 package daemon
 
 import (
@@ -24,18 +34,36 @@ import (
 	"path/filepath"
 )
 
+// ProtocolVersion is bumped on every wire-format change. Mismatched versions
+// are a hard error — the daemon does not attempt backward compatibility.
+const ProtocolVersion = 2
+
 // MaxFrameSize caps a single frame at 256 MiB to prevent a malicious or
 // buggy peer from forcing the other side into an OOM. The launcher's actual
 // usage is many orders of magnitude below this.
 const MaxFrameSize = 256 * 1024 * 1024
 
-// Request is what the client sends. Args are CLI flags as the user typed
-// them (everything after argv[0]); Stdin is the raw input the user piped in.
-// The daemon parses both the same way the standalone binary used to —
-// keeps the client minimal and ensures behavior parity.
-type Request struct {
-	Args  []string `json:"args"`
-	Stdin string   `json:"stdin"`
+// Message tag values. Stable across protocol versions within v2.
+const (
+	MsgTagHello      uint8 = 1
+	MsgTagStdinChunk uint8 = 2
+	MsgTagStdinEOF   uint8 = 3
+	MsgTagResponse   uint8 = 4
+)
+
+// Hello is the client's first message. Carries argv (everything after argv[0])
+// and the protocol version it speaks. The daemon parses Args the same way the
+// standalone binary used to.
+type Hello struct {
+	Version int      `json:"version"`
+	Args    []string `json:"args"`
+}
+
+// StdinChunk carries a batch of stdin lines. The client batches lines (by
+// count, byte size, or short idle interval) before sending; the daemon
+// appends them to the live launcher items as each chunk arrives.
+type StdinChunk struct {
+	Lines []string `json:"lines"`
 }
 
 // Response carries the user's selection and the exit code the client should
@@ -47,81 +75,117 @@ type Response struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// WriteFrame writes payload as a length-prefixed frame.
-func WriteFrame(w io.Writer, payload []byte) error {
+// WriteMsg writes a tagged, length-prefixed frame.
+func WriteMsg(w io.Writer, tag uint8, payload []byte) error {
 	if len(payload) > MaxFrameSize {
 		return fmt.Errorf("daemon: frame size %d exceeds max %d", len(payload), MaxFrameSize)
 	}
-	var hdr [4]byte
-	binary.BigEndian.PutUint32(hdr[:], uint32(len(payload)))
+	var hdr [5]byte
+	hdr[0] = tag
+	binary.BigEndian.PutUint32(hdr[1:], uint32(len(payload)))
 	if _, err := w.Write(hdr[:]); err != nil {
 		return fmt.Errorf("daemon: write frame header: %w", err)
 	}
-	if _, err := w.Write(payload); err != nil {
-		return fmt.Errorf("daemon: write frame body: %w", err)
+	if len(payload) > 0 {
+		if _, err := w.Write(payload); err != nil {
+			return fmt.Errorf("daemon: write frame body: %w", err)
+		}
 	}
 	return nil
 }
 
-// ReadFrame reads one length-prefixed frame.
-func ReadFrame(r io.Reader) ([]byte, error) {
-	var hdr [4]byte
+// ReadMsg reads one tagged frame. Returns the tag byte and the payload bytes.
+// The payload may be empty (e.g. MsgStdinEOF).
+func ReadMsg(r io.Reader) (uint8, []byte, error) {
+	var hdr [5]byte
 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
-		return nil, fmt.Errorf("daemon: read frame header: %w", err)
+		return 0, nil, fmt.Errorf("daemon: read frame header: %w", err)
 	}
-	n := binary.BigEndian.Uint32(hdr[:])
+	tag := hdr[0]
+	n := binary.BigEndian.Uint32(hdr[1:])
 	if n > MaxFrameSize {
-		return nil, fmt.Errorf("daemon: frame size %d exceeds max %d", n, MaxFrameSize)
+		return 0, nil, fmt.Errorf("daemon: frame size %d exceeds max %d", n, MaxFrameSize)
+	}
+	if n == 0 {
+		return tag, nil, nil
 	}
 	buf := make([]byte, n)
 	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, fmt.Errorf("daemon: read frame body: %w", err)
+		return 0, nil, fmt.Errorf("daemon: read frame body: %w", err)
 	}
-	return buf, nil
+	return tag, buf, nil
 }
 
-// WriteRequest is a typed convenience wrapper.
-func WriteRequest(w io.Writer, req *Request) error {
-	b, err := json.Marshal(req)
+// WriteHello sends a MsgHello frame.
+func WriteHello(w io.Writer, h *Hello) error {
+	b, err := json.Marshal(h)
 	if err != nil {
-		return fmt.Errorf("daemon: marshal request: %w", err)
+		return fmt.Errorf("daemon: marshal hello: %w", err)
 	}
-	return WriteFrame(w, b)
+	return WriteMsg(w, MsgTagHello, b)
 }
 
-// ReadRequest reads and decodes a Request.
-func ReadRequest(r io.Reader) (*Request, error) {
-	b, err := ReadFrame(r)
+// DecodeHello decodes the payload of a MsgHello frame.
+func DecodeHello(payload []byte) (*Hello, error) {
+	var h Hello
+	if err := json.Unmarshal(payload, &h); err != nil {
+		return nil, fmt.Errorf("daemon: unmarshal hello: %w", err)
+	}
+	return &h, nil
+}
+
+// WriteChunk sends a MsgStdinChunk frame.
+func WriteChunk(w io.Writer, c *StdinChunk) error {
+	b, err := json.Marshal(c)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("daemon: marshal chunk: %w", err)
 	}
-	var req Request
-	if err := json.Unmarshal(b, &req); err != nil {
-		return nil, fmt.Errorf("daemon: unmarshal request: %w", err)
-	}
-	return &req, nil
+	return WriteMsg(w, MsgTagStdinChunk, b)
 }
 
-// WriteResponse is a typed convenience wrapper.
-func WriteResponse(w io.Writer, resp *Response) error {
-	b, err := json.Marshal(resp)
+// DecodeChunk decodes the payload of a MsgStdinChunk frame.
+func DecodeChunk(payload []byte) (*StdinChunk, error) {
+	var c StdinChunk
+	if err := json.Unmarshal(payload, &c); err != nil {
+		return nil, fmt.Errorf("daemon: unmarshal chunk: %w", err)
+	}
+	return &c, nil
+}
+
+// WriteEOF sends a MsgStdinEOF frame (no payload).
+func WriteEOF(w io.Writer) error {
+	return WriteMsg(w, MsgTagStdinEOF, nil)
+}
+
+// WriteResponse sends a MsgResponse frame.
+func WriteResponse(w io.Writer, r *Response) error {
+	b, err := json.Marshal(r)
 	if err != nil {
 		return fmt.Errorf("daemon: marshal response: %w", err)
 	}
-	return WriteFrame(w, b)
+	return WriteMsg(w, MsgTagResponse, b)
 }
 
-// ReadResponse reads and decodes a Response.
+// DecodeResponse decodes the payload of a MsgResponse frame.
+func DecodeResponse(payload []byte) (*Response, error) {
+	var r Response
+	if err := json.Unmarshal(payload, &r); err != nil {
+		return nil, fmt.Errorf("daemon: unmarshal response: %w", err)
+	}
+	return &r, nil
+}
+
+// ReadResponse is a convenience for the client: reads one frame and
+// requires it to be MsgResponse.
 func ReadResponse(r io.Reader) (*Response, error) {
-	b, err := ReadFrame(r)
+	tag, payload, err := ReadMsg(r)
 	if err != nil {
 		return nil, err
 	}
-	var resp Response
-	if err := json.Unmarshal(b, &resp); err != nil {
-		return nil, fmt.Errorf("daemon: unmarshal response: %w", err)
+	if tag != MsgTagResponse {
+		return nil, fmt.Errorf("daemon: expected response frame (tag %d), got tag %d", MsgTagResponse, tag)
 	}
-	return &resp, nil
+	return DecodeResponse(payload)
 }
 
 // DefaultSocketPath is the canonical Unix-socket path for the user's daemon.

@@ -21,7 +21,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -158,31 +157,60 @@ func acceptLoop(l net.Listener) {
 
 func handleConn(conn net.Conn) {
 	defer conn.Close()
-	req, err := daemon.ReadRequest(conn)
+
+	// First frame must be Hello.
+	tag, payload, err := daemon.ReadMsg(conn)
 	if err != nil {
 		if !errors.Is(err, io.EOF) {
-			log.Printf("read request: %v", err)
+			log.Printf("read hello: %v", err)
 		}
 		return
 	}
-	resp := serveRequest(req)
+	if tag != daemon.MsgTagHello {
+		writeResponseLogged(conn, &daemon.Response{
+			ExitCode: 2,
+			Error:    fmt.Sprintf("expected hello (tag %d), got tag %d", daemon.MsgTagHello, tag),
+		})
+		return
+	}
+	hello, err := daemon.DecodeHello(payload)
+	if err != nil {
+		writeResponseLogged(conn, &daemon.Response{ExitCode: 2, Error: err.Error()})
+		return
+	}
+	if hello.Version != daemon.ProtocolVersion {
+		writeResponseLogged(conn, &daemon.Response{
+			ExitCode: 2,
+			Error: fmt.Sprintf("unsupported protocol version %d (daemon speaks %d)",
+				hello.Version, daemon.ProtocolVersion),
+		})
+		return
+	}
+
+	// serveRequest owns the response write and conn close so it can sequence
+	// them correctly with the streaming chunk reader.
+	serveRequest(conn, hello)
+}
+
+func writeResponseLogged(conn net.Conn, resp *daemon.Response) {
 	if err := daemon.WriteResponse(conn, resp); err != nil {
 		log.Printf("write response: %v", err)
 	}
 }
 
 // serveRequest runs the launcher for a single client request. Configures
-// the persistent window, shows it, waits for the user, hides it.
-func serveRequest(req *daemon.Request) *daemon.Response {
-	cfg, err := config.ParseFlags(req.Args)
+// the persistent window with no items, shows it, streams stdin into the
+// live launcher via a dedicated reader goroutine while the user interacts,
+// writes the response, then closes the connection (which terminates the
+// chunk reader).
+func serveRequest(conn net.Conn, hello *daemon.Hello) {
+	cfg, err := config.ParseFlags(hello.Args)
 	if err != nil {
-		return &daemon.Response{ExitCode: 2, Error: fmt.Sprintf("parse flags: %v", err)}
-	}
-
-	reader := input.NewReader(strings.NewReader(req.Stdin), cfg.Markup)
-	items, err := reader.ReadAll()
-	if err != nil {
-		return &daemon.Response{ExitCode: 2, Error: fmt.Sprintf("read items: %v", err)}
+		writeResponseLogged(conn, &daemon.Response{
+			ExitCode: 2,
+			Error:    fmt.Sprintf("parse flags: %v", err),
+		})
+		return
 	}
 
 	// Serialize. Concurrent clients queue here; the user only ever sees one
@@ -200,7 +228,11 @@ func serveRequest(req *daemon.Request) *daemon.Response {
 	h := handle
 	stateMu.Unlock()
 	if w == nil || h == nil {
-		return &daemon.Response{ExitCode: 1, Error: "daemon: bootstrap incomplete"}
+		writeResponseLogged(conn, &daemon.Response{
+			ExitCode: 1,
+			Error:    "daemon: bootstrap incomplete",
+		})
+		return
 	}
 
 	defer func() {
@@ -209,8 +241,8 @@ func serveRequest(req *daemon.Request) *daemon.Response {
 		}
 	}()
 
-	w.Configure(items, cfg.HighlightMatches, cfg.ExactMode, cfg.Rank)
-	log.Printf("serving request: %d items", len(items))
+	w.ConfigureEmpty(cfg.HighlightMatches, cfg.ExactMode, cfg.Rank)
+	log.Printf("serving streaming request")
 
 	t0 := time.Now()
 	h.MakeKeyAndOrderFront()
@@ -228,10 +260,75 @@ func serveRequest(req *daemon.Request) *daemon.Response {
 		}
 	}
 
+	// Stream stdin into the window. The reader goroutine exits cleanly when
+	// it sees MsgStdinEOF or a read error — the latter happens when we close
+	// the socket below after writing the response.
+	chunkReaderDone := make(chan int)
+	go streamChunks(conn, w, cfg.Markup, chunkReaderDone)
+
 	selected := w.WaitForSelection()
-	log.Printf("request done in %.1f ms: selection=%q", time.Since(t0).Seconds()*1000, selected)
+
+	// Write response BEFORE closing the conn — closing first would race the
+	// reader goroutine and turn the response write into a "use of closed
+	// connection" error.
+	writeResponseLogged(conn, &daemon.Response{Selection: selected, ExitCode: 0})
+
+	// Now signal the chunk reader to exit by closing the conn. The defer in
+	// handleConn will Close again; net.Conn.Close is idempotent.
+	_ = conn.Close()
+
+	// Bound the wait so a misbehaving client can't block window hide.
+	var streamedCount int
+	select {
+	case streamedCount = <-chunkReaderDone:
+	case <-time.After(500 * time.Millisecond):
+		log.Printf("warning: chunk reader did not exit within 500ms")
+	}
+
+	log.Printf("request done in %.1f ms: %d items streamed, selection=%q",
+		time.Since(t0).Seconds()*1000, streamedCount, selected)
 
 	h.OrderOut()
+}
 
-	return &daemon.Response{Selection: selected, ExitCode: 0}
+// streamChunks reads MsgStdinChunk frames off conn and appends the parsed
+// items to w via AppendItems. Exits when:
+//   - MsgStdinEOF arrives (clean termination by client),
+//   - any read error occurs (connection closed by daemon after selection,
+//     or client disconnected unexpectedly),
+//   - a frame with an unexpected tag arrives.
+//
+// Reports total items streamed via doneC, then closes it.
+func streamChunks(conn net.Conn, w *ui.Window, markupFormat string, doneC chan<- int) {
+	defer close(doneC)
+	index := 0
+	for {
+		tag, payload, err := daemon.ReadMsg(conn)
+		if err != nil {
+			doneC <- index
+			return
+		}
+		switch tag {
+		case daemon.MsgTagStdinChunk:
+			chunk, err := daemon.DecodeChunk(payload)
+			if err != nil {
+				log.Printf("decode chunk: %v", err)
+				doneC <- index
+				return
+			}
+			batch := make([]input.Item, 0, len(chunk.Lines))
+			for _, line := range chunk.Lines {
+				batch = append(batch, input.ParseLine(line, index, markupFormat))
+				index++
+			}
+			w.AppendItems(batch)
+		case daemon.MsgTagStdinEOF:
+			doneC <- index
+			return
+		default:
+			log.Printf("unexpected frame tag %d during stream", tag)
+			doneC <- index
+			return
+		}
+	}
 }

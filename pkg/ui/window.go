@@ -76,6 +76,16 @@ type Window struct {
 	// subsequent non-empty queries don't write through into w.items.
 	filteredOwned []input.Item
 
+	// Streaming-stdin support. Producers (the daemon's chunk-reader
+	// goroutine) push batches into pendingItems; the event-loop goroutine
+	// drains them at the top of each layout pass and bumps itemsGeneration.
+	// The filter cache compares lastFilteredGeneration against
+	// itemsGeneration so growth invalidates the early-out without forcing
+	// a re-filter on truly idle frames.
+	pendingItems           chan []input.Item
+	itemsGeneration        uint64
+	lastFilteredGeneration uint64
+
 	// Daemon-mode signaling. nil channels are fine (no daemon waiting); the
 	// non-blocking sends elsewhere handle that case.
 	requestDone    chan struct{} // closed when current request completes (selection or cancel)
@@ -142,6 +152,7 @@ func newWindowShell() *Window {
 		metrics:        metrics,
 		firstFrame:     true,
 		firstFrameOnce: make(chan struct{}),
+		pendingItems:   make(chan []input.Item, 64),
 	}
 	window.searchInput.Focus()
 
@@ -160,8 +171,27 @@ func newWindowShell() *Window {
 // for a previous request — the daemon's serialization (workMu) ensures this
 // by draining requests one-at-a-time.
 func (w *Window) Configure(items []input.Item, highlightMatches, exactMode, rankEnabled bool) {
+	w.configureCommon(highlightMatches, exactMode, rankEnabled)
 	w.items = items
 	w.filtered = items
+	w.itemsGeneration++
+}
+
+// ConfigureEmpty prepares the window for a streaming request. Same as
+// Configure but starts with no items — the daemon will push items through
+// AppendItems as stdin arrives. Used by the daemon path so the window can
+// appear immediately while items stream in behind it.
+func (w *Window) ConfigureEmpty(highlightMatches, exactMode, rankEnabled bool) {
+	w.configureCommon(highlightMatches, exactMode, rankEnabled)
+	w.items = nil
+	w.filtered = nil
+	w.itemsGeneration++
+}
+
+// configureCommon resets all per-request state shared by Configure and
+// ConfigureEmpty. Caller is responsible for setting items/filtered and
+// bumping itemsGeneration appropriately.
+func (w *Window) configureCommon(highlightMatches, exactMode, rankEnabled bool) {
 	for k := range w.matchPositions {
 		delete(w.matchPositions, k)
 	}
@@ -174,7 +204,20 @@ func (w *Window) Configure(items []input.Item, highlightMatches, exactMode, rank
 	w.cancelled = false
 	w.lastQuery = ""
 	w.hasFiltered = false
+	w.lastFilteredGeneration = 0
 	w.filteredOwned = w.filteredOwned[:0]
+
+	// Drop any chunks left over from a previous request (defensive — the
+	// daemon already serializes via workMu and waits for the chunk-reader
+	// goroutine to exit before returning).
+	for {
+		select {
+		case <-w.pendingItems:
+		default:
+			goto drained
+		}
+	}
+drained:
 
 	// Reset list cursor + clicked tracker. List has no public reset, but
 	// MoveUp from index 0 is a no-op so we synthesize it.
@@ -188,6 +231,47 @@ func (w *Window) Configure(items []input.Item, highlightMatches, exactMode, rank
 
 	// Fresh per-request signal channel. Closed when selection/cancel happens.
 	w.requestDone = make(chan struct{})
+}
+
+// AppendItems pushes a batch of items into the live launcher. Safe to call
+// from any goroutine — the items land in pendingItems and the event-loop
+// goroutine drains them at the top of the next layout pass. Calls
+// Invalidate() to wake the event loop so the new items appear immediately.
+//
+// If pendingItems is full (producer outpacing the UI by ~64 batches) the
+// send blocks rather than dropping items — the launcher must reflect every
+// item the user piped in.
+func (w *Window) AppendItems(items []input.Item) {
+	if len(items) == 0 {
+		return
+	}
+	w.pendingItems <- items
+	if w.app != nil {
+		w.app.Invalidate()
+	}
+}
+
+// drainPendingItems pulls all currently-buffered batches out of
+// pendingItems, appends them to w.items, and bumps itemsGeneration if
+// anything arrived. Must run on the event-loop goroutine — that's the only
+// goroutine permitted to mutate w.items. Called at the top of layout().
+func (w *Window) drainPendingItems() {
+	if w.pendingItems == nil {
+		return
+	}
+	drained := false
+	for {
+		select {
+		case batch := <-w.pendingItems:
+			w.items = append(w.items, batch...)
+			drained = true
+		default:
+			if drained {
+				w.itemsGeneration++
+			}
+			return
+		}
+	}
 }
 
 // GioWindow exposes the underlying *app.Window so callers can call
@@ -319,14 +403,17 @@ func (w *Window) Cancel() {
 }
 
 // filterItems filters items based on the search query.
-// No-op when called repeatedly with the same query (the layout pass calls this
-// on every frame; we don't want to re-walk a million items on idle redraws).
+// No-op when called repeatedly with the same query and the same items
+// (the layout pass calls this on every frame; we don't want to re-walk a
+// million items on idle redraws). When stdin is streaming, itemsGeneration
+// bumps on growth and forces a re-filter.
 func (w *Window) filterItems(query string) {
-	if w.hasFiltered && query == w.lastQuery {
+	if w.hasFiltered && query == w.lastQuery && w.lastFilteredGeneration == w.itemsGeneration {
 		return
 	}
 	w.lastQuery = query
 	w.hasFiltered = true
+	w.lastFilteredGeneration = w.itemsGeneration
 
 	if query == "" {
 		w.filtered = w.items
@@ -398,6 +485,10 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 	if BenchmarkMode && w.firstFrame && w.metrics.FirstLayoutTime.IsZero() {
 		w.metrics.FirstLayoutTime = time.Now()
 	}
+
+	// Drain any items that streamed in since the last frame. Must happen
+	// before filtering so the new items participate in this frame's render.
+	w.drainPendingItems()
 
 	// Register for keyboard events FIRST (cover entire window area)
 	// This ensures window-level keys are registered before editor widget

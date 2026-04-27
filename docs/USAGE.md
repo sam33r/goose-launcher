@@ -37,8 +37,12 @@ LAUNCHER_CMD="goose-launcher --bind alt-enter:print-query --bind tab:replace-que
 --height=N            Window height percentage (default: 100)
 --layout=STYLE        Layout style: default|reverse
 --bind=KEY:ACTION     Custom key binding (can be specified multiple times)
---interactive         Interactive mode (continuous stdin)
 ```
+
+The launcher streams stdin: the window appears as soon as you invoke the
+binary (no waiting for the producer to close stdin), and items flow in as
+they arrive. Selecting or pressing ESC closes the connection — the upstream
+producer (e.g. `find /`) gets SIGPIPE on its next write and terminates.
 
 ## Key Bindings
 

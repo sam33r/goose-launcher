@@ -25,9 +25,13 @@ func NewReader(r io.Reader, markupFormat string) *Reader {
 	}
 }
 
-// parseLine parses a single line into an Item
-// Format: "plugin   . item_text" or just "item_text"
-func (r *Reader) parseLine(line string, index int) Item {
+// ParseLine parses a single line into an Item.
+// Format: "plugin   . item_text" or just "item_text".
+// markupFormat selects stdin markup parsing; pass "" to disable.
+//
+// Used directly by the daemon's streaming chunk handler so it can parse lines
+// as they arrive without holding a Reader. Reader.ReadAll delegates here too.
+func ParseLine(line string, index int, markupFormat string) Item {
 	parts := strings.SplitN(line, separator, 2)
 
 	var plugin, text string
@@ -45,7 +49,7 @@ func (r *Reader) parseLine(line string, index int) Item {
 		Index:  index,
 	}
 
-	if r.markup == "pango" {
+	if markupFormat == "pango" {
 		// Parse the text portion for display. On failure fall back to the
 		// literal line — one bad item shouldn't break the whole launcher.
 		// item.Raw stays as the original input line so the caller gets the
@@ -60,6 +64,12 @@ func (r *Reader) parseLine(line string, index int) Item {
 
 	item.Init()
 	return item
+}
+
+// parseLine is kept as a thin method-receiver shim so existing tests
+// (TestParseLine_*) continue to call r.parseLine(line, index).
+func (r *Reader) parseLine(line string, index int) Item {
+	return ParseLine(line, index, r.markup)
 }
 
 // ReadAll reads all items from stdin (blocking)
