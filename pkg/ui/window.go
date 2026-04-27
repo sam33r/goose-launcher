@@ -544,6 +544,30 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 		}
 	}
 
+	// Process Ctrl+D (Page Down)
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: "D", Required: key.ModCtrl})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			w.list.MovePageDown(len(w.filtered))
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+
+	// Process Ctrl+U (Page Up)
+	for {
+		ev, ok := gtx.Event(key.Filter{Name: "U", Required: key.ModCtrl})
+		if !ok {
+			break
+		}
+		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			w.list.MovePageUp()
+			gtx.Execute(op.InvalidateCmd{})
+		}
+	}
+
 	// Process Shift+Return key (for outputting query)
 	for {
 		ev, ok := gtx.Event(key.Filter{Name: key.NameReturn, Required: key.ModShift})

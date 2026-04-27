@@ -3,28 +3,26 @@ package config
 import (
 	"flag"
 	"fmt"
-	"strings"
 )
 
 // Config holds launcher configuration from CLI flags
 type Config struct {
 	ExactMode        bool
-	Rank             bool     // Enable ranking/scoring of matches
+	Rank             bool // Enable ranking/scoring of matches
 	Height           int
 	Layout           string
-	Keybindings      []string // --bind flags (stored for later parsing)
-	HighlightMatches bool     // Highlight matching text in results (default: true)
-	Markup           string   // Stdin markup format: "" (off) or "pango"
+	HighlightMatches bool   // Highlight matching text in results (default: true)
+	Markup           string // Stdin markup format: "" (off) or "pango"
 }
 
 // ParseFlags parses command-line arguments into Config
 func ParseFlags(args []string) (*Config, error) {
 	cfg := &Config{
-		ExactMode:        true,   // Default: exact match mode (changed from false)
-		Rank:             false,  // Default: preserve stdin order (no re-sorting)
-		Height:           100,    // Default: full height
+		ExactMode:        true, // Default: exact match mode (changed from false)
+		Rank:             false, // Default: preserve stdin order (no re-sorting)
+		Height:           100, // Default: full height
 		Layout:           "default",
-		HighlightMatches: true,   // Default: highlight matches enabled
+		HighlightMatches: true, // Default: highlight matches enabled
 	}
 
 	fs := flag.NewFlagSet("goose-launcher", flag.ContinueOnError)
@@ -41,10 +39,6 @@ func ParseFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.Layout, "layout", "default", "layout style (default|reverse)")
 	fs.BoolVar(&cfg.HighlightMatches, "highlight-matches", true, "highlight matching text in results")
 	fs.StringVar(&cfg.Markup, "markup", "", "stdin markup format: pango (default: off)")
-
-	// Custom handling for --bind flags (can appear multiple times)
-	var bindFlags multiFlag
-	fs.Var(&bindFlags, "bind", "custom key bindings")
 
 	// Parse
 	if err := fs.Parse(args); err != nil {
@@ -69,19 +63,5 @@ func ParseFlags(args []string) (*Config, error) {
 		return nil, fmt.Errorf("unsupported --markup value %q (want \"\" or \"pango\")", cfg.Markup)
 	}
 
-	cfg.Keybindings = bindFlags
-
 	return cfg, nil
-}
-
-// multiFlag allows multiple values for a flag
-type multiFlag []string
-
-func (m *multiFlag) String() string {
-	return strings.Join(*m, ",")
-}
-
-func (m *multiFlag) Set(value string) error {
-	*m = append(*m, value)
-	return nil
 }

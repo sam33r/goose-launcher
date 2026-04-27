@@ -23,8 +23,16 @@ Add to `~/.config/goose`:
 
 ```bash
 # Use native launcher instead of fzf
-LAUNCHER_CMD="goose-launcher --bind alt-enter:print-query --bind tab:replace-query --bind=enter:replace-query+print-query --bind=ctrl-u:page-up --bind=ctrl-d:page-down --bind=ctrl-alt-u:pos(1) --bind=ctrl-alt-d:pos(-1) --no-sort --height=100 --layout=reverse"
+LAUNCHER_CMD="goose-launcher --no-sort --height=100 --layout=reverse"
 ```
+
+> **Migration note:** the `--bind KEY:ACTION` flag was removed (the bindings
+> were silently ignored anyway). If your `LAUNCHER_CMD` still passes `--bind`,
+> the launcher will exit with `flag provided but not defined: -bind`. The
+> behaviors that those binds described — `tab:replace-query`,
+> `ctrl-u:page-up`, `ctrl-d:page-down` — are now hardcoded as default
+> bindings, so dropping the `--bind` flags retains the behavior people
+> actually got.
 
 ## Command-Line Options
 
@@ -36,7 +44,6 @@ LAUNCHER_CMD="goose-launcher --bind alt-enter:print-query --bind tab:replace-que
 --markup=FORMAT       Parse stdin markup; currently only 'pango' is supported
 --height=N            Window height percentage (default: 100)
 --layout=STYLE        Layout style: default|reverse
---bind=KEY:ACTION     Custom key binding (can be specified multiple times)
 ```
 
 The launcher streams stdin: the window appears as soon as you invoke the
@@ -46,21 +53,20 @@ producer (e.g. `find /`) gets SIGPIPE on its next write and terminates.
 
 ## Key Bindings
 
-**Default bindings:**
+All bindings are hardcoded; the launcher does not currently support
+user-configurable key bindings.
 
-- `↑` / `↓` - Navigate up/down
-- `Ctrl+J` / `Ctrl+K` - Navigate down/up
-- `Enter` - Select item
-- `Shift+Enter` - Output current search query and exit
-- `ESC` - Cancel (exit code 1)
-- `Cmd+Q` - Quit application
-
-**Custom bindings** (via --bind flag):
-
-- `alt-enter:print-query` - Output typed query instead of selection
-- `tab:replace-query` - Replace search with selected item
-- `ctrl-u:page-up` - Scroll up one page
-- `ctrl-d:page-down` - Scroll down one page
+- `↑` / `↓` — Navigate up / down
+- `Ctrl+K` / `Ctrl+J` — Navigate up / down (vim-style)
+- `Ctrl+U` / `Ctrl+D` — Page up / page down (jumps by visible-row count)
+- `Enter` — Select highlighted item; if no matches, output the typed query
+- `Shift+Enter` — Output the typed query (regardless of selection)
+- `Tab` — Replace search input with the selected item's raw text
+- `ESC` — Cancel
+- `Cmd+Q` — Quit
+- Mouse wheel — Scrolls the list AND moves the highlighted row by the same
+  amount, so the cursor's position within the visible window stays stable.
+- Mouse click on an item — Select it.
 
 ## Examples
 

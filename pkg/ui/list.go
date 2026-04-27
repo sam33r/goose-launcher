@@ -50,9 +50,6 @@ func (l *List) Layout(gtx layout.Context, theme *material.Theme, items []input.I
 		return layout.Dimensions{}
 	}
 
-	// DEBUG: Log that we're rendering
-	// fmt.Printf("DEBUG: Layout called with %d items\n", len(items))
-
 	// Ensure selection is in bounds
 	if l.selected >= len(items) {
 		l.selected = len(items) - 1
@@ -61,20 +58,74 @@ func (l *List) Layout(gtx layout.Context, theme *material.Theme, items []input.I
 		l.selected = 0
 	}
 
+	// Snapshot the viewport position before any scroll mutation so we can
+	// detect mouse-wheel input by comparing Position.First after layout.
+	prevFirst := l.list.Position.First
+	didProgrammaticScroll := l.needsScroll && l.scrollToItem >= 0 && l.scrollToItem < len(items)
+
 	// Handle scrolling in layout context
-	if l.needsScroll && l.scrollToItem >= 0 && l.scrollToItem < len(items) {
+	if didProgrammaticScroll {
 		l.list.ScrollTo(l.scrollToItem)
 		l.needsScroll = false
 		l.scrollToItem = -1
 	}
 
-	return material.List(theme, &l.list).Layout(gtx, len(items), func(gtx layout.Context, index int) layout.Dimensions {
+	dims := material.List(theme, &l.list).Layout(gtx, len(items), func(gtx layout.Context, index int) layout.Dimensions {
 		matchPos := matchPositions[index]
-		dims := l.layoutItem(gtx, theme, items[index], index, index == l.selected, matchPos, highlightMatches)
-		// DEBUG: Log each item layout
-		// fmt.Printf("DEBUG: Item %d layouted, dims=%v\n", index, dims)
-		return dims
+		return l.layoutItem(gtx, theme, items[index], index, index == l.selected, matchPos, highlightMatches)
 	})
+
+	// After layout, Position.First reflects any wheel input from this frame.
+	// If we didn't programmatically scroll, attribute the change to the user
+	// and shift selection so the highlighted row tracks the viewport.
+	l.applyWheelDelta(prevFirst, didProgrammaticScroll, len(items))
+
+	return dims
+}
+
+// applyWheelDelta keeps the highlighted row in sync with the viewport when
+// the user scrolls the mouse wheel. Called after material.List.Layout()
+// returns; Position.First by then reflects any wheel input. When we
+// requested a programmatic scroll earlier this frame, the delta is ours and
+// must be ignored.
+//
+// After applying the 1:1 delta, selection is clamped into a "comfortable
+// band" inside the viewport — at least scrollOffset rows below the top and
+// above the bottom — so the highlight is never partially clipped at either
+// edge.
+func (l *List) applyWheelDelta(prevFirst int, didProgrammaticScroll bool, itemCount int) {
+	if didProgrammaticScroll || itemCount == 0 {
+		return
+	}
+	delta := l.list.Position.First - prevFirst
+	if delta == 0 {
+		return
+	}
+	sel := l.selected + delta
+
+	// Keep selection at least scrollOffset rows away from each viewport edge.
+	// Skipped when Position.Count isn't populated yet (pre-first-layout) or
+	// when the viewport is too small to fit two scrollOffset bands — fall
+	// back to plain bounds clamping in those cases.
+	if count := l.list.Position.Count; count > 2*scrollOffset {
+		first := l.list.Position.First
+		topBuffer := first + scrollOffset
+		bottomBuffer := first + count - 1 - scrollOffset
+		if sel < topBuffer {
+			sel = topBuffer
+		}
+		if sel > bottomBuffer {
+			sel = bottomBuffer
+		}
+	}
+
+	if sel < 0 {
+		sel = 0
+	}
+	if sel >= itemCount {
+		sel = itemCount - 1
+	}
+	l.selected = sel
 }
 
 // layoutItem renders a single list item
@@ -314,6 +365,55 @@ func (l *List) MoveDown(itemCount int) {
 			l.needsScroll = true
 		}
 	}
+}
+
+// MovePageDown jumps selection down by one page (the number of rows
+// currently visible) and pins the viewport so the new selection is visible
+// with the standard scrollOffset of context above it. Falls back to a single
+// row before the first layout has populated Position.Count.
+func (l *List) MovePageDown(itemCount int) {
+	page := l.list.Position.Count
+	if page <= 0 {
+		page = 1
+	}
+	target := l.selected + page
+	if target >= itemCount {
+		target = itemCount - 1
+	}
+	if target <= l.selected {
+		return
+	}
+	l.selected = target
+
+	top := l.selected - scrollOffset
+	if top < 0 {
+		top = 0
+	}
+	l.scrollToItem = top
+	l.needsScroll = true
+}
+
+// MovePageUp mirrors MovePageDown going up.
+func (l *List) MovePageUp() {
+	page := l.list.Position.Count
+	if page <= 0 {
+		page = 1
+	}
+	target := l.selected - page
+	if target < 0 {
+		target = 0
+	}
+	if target >= l.selected {
+		return
+	}
+	l.selected = target
+
+	top := l.selected - scrollOffset
+	if top < 0 {
+		top = 0
+	}
+	l.scrollToItem = top
+	l.needsScroll = true
 }
 
 // Selected returns the currently selected index

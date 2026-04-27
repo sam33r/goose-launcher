@@ -150,6 +150,16 @@ func TestParseFlags_MarkupRejectsUnknown(t *testing.T) {
 	}
 }
 
+// --bind was a no-op stub for the fzf-style keybinding flag. Removed
+// because the bindings were silently ignored, misleading users into thinking
+// they worked. Users with --bind in their LAUNCHER_CMD must remove it.
+func TestParseFlags_RejectsBindFlag(t *testing.T) {
+	_, err := ParseFlags([]string{"--bind", "tab:replace-query"})
+	if err == nil {
+		t.Fatal("expected --bind to be rejected (flag was removed)")
+	}
+}
+
 // TestHighlightMatchesDefaultTrue tests that --highlight-matches defaults to true
 func TestHighlightMatchesDefaultTrue(t *testing.T) {
 	cfg, err := ParseFlags([]string{})
