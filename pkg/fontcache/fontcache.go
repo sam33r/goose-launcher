@@ -13,6 +13,7 @@ type Cache struct {
 	regular font.Face
 	bold    font.Face
 	italic  font.Face
+	emoji   font.Face
 	once    sync.Once
 	err     error
 }
@@ -20,10 +21,10 @@ type Cache struct {
 // Global font cache instance
 var globalCache = &Cache{}
 
-// ParseFonts parses the font bytes and caches the results.
-// Subsequent calls return the cached faces. italicBytes may be nil, in which
-// case the italic face is also nil and callers must skip registering it.
-func (c *Cache) ParseFonts(regularBytes, boldBytes, italicBytes []byte) (regular, bold, italic font.Face, err error) {
+// ParseFonts parses the font bytes and caches the results. Subsequent calls
+// return the cached faces. italicBytes and emojiBytes may be nil; the
+// corresponding faces will also be nil and callers must skip registering them.
+func (c *Cache) ParseFonts(regularBytes, boldBytes, italicBytes, emojiBytes []byte) (regular, bold, italic, emoji font.Face, err error) {
 	c.once.Do(func() {
 		c.regular, c.err = opentype.Parse(regularBytes)
 		if c.err != nil {
@@ -42,19 +43,27 @@ func (c *Cache) ParseFonts(regularBytes, boldBytes, italicBytes []byte) (regular
 				return
 			}
 		}
+		if emojiBytes != nil {
+			c.emoji, c.err = opentype.Parse(emojiBytes)
+			if c.err != nil {
+				c.err = fmt.Errorf("failed to parse emoji font: %w", c.err)
+				return
+			}
+		}
 	})
 
 	if c.err != nil {
-		return nil, nil, nil, c.err
+		return nil, nil, nil, nil, c.err
 	}
 
-	return c.regular, c.bold, c.italic, nil
+	return c.regular, c.bold, c.italic, c.emoji, nil
 }
 
 // GetFonts returns cached fonts or parses them if not cached.
-// italicBytes may be nil; the returned italic face will then also be nil.
-func GetFonts(regularBytes, boldBytes, italicBytes []byte) (regular, bold, italic font.Face, err error) {
-	return globalCache.ParseFonts(regularBytes, boldBytes, italicBytes)
+// italicBytes and emojiBytes may be nil; the corresponding returned faces
+// will then also be nil.
+func GetFonts(regularBytes, boldBytes, italicBytes, emojiBytes []byte) (regular, bold, italic, emoji font.Face, err error) {
+	return globalCache.ParseFonts(regularBytes, boldBytes, italicBytes, emojiBytes)
 }
 
 // Reset clears the cache (useful for testing)
