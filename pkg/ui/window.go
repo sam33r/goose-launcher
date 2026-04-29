@@ -35,6 +35,9 @@ var jetbrainsMonoBold []byte
 //go:embed fonts/JetBrainsMono-Italic.ttf
 var jetbrainsMonoItalic []byte
 
+//go:embed fonts/NotoEmoji-Regular.ttf
+var notoEmojiRegular []byte
+
 // Window manages the launcher UI window.
 //
 // Lifecycle modes:
@@ -126,8 +129,12 @@ func newWindowShell() *Window {
 
 	theme := material.NewTheme()
 
-	// Configure JetBrains Mono font (using cache)
-	regular, bold, italic, err := fontcache.GetFonts(jetbrainsMonoRegular, jetbrainsMonoBold, jetbrainsMonoItalic)
+	// Configure JetBrains Mono font (using cache). Noto Emoji rides
+	// along as a fallback face so codepoints outside JetBrains Mono's
+	// coverage (emoji, dingbats) shape against an outline-glyph font
+	// rather than tofu — Apple Color Emoji's sbix tables aren't
+	// renderable by Gio.
+	regular, bold, italic, emoji, err := fontcache.GetFonts(jetbrainsMonoRegular, jetbrainsMonoBold, jetbrainsMonoItalic, notoEmojiRegular)
 	if err != nil {
 		panic(fmt.Sprintf("failed to load fonts: %v", err))
 	}
@@ -136,6 +143,7 @@ func newWindowShell() *Window {
 		{Font: font.Font{Typeface: "JetBrains Mono"}, Face: regular},
 		{Font: font.Font{Typeface: "JetBrains Mono", Weight: font.Bold}, Face: bold},
 		{Font: font.Font{Typeface: "JetBrains Mono", Style: font.Italic}, Face: italic},
+		{Font: font.Font{Typeface: "Noto Emoji"}, Face: emoji},
 	}
 	theme.Shaper = text.NewShaper(text.WithCollection(collection))
 
