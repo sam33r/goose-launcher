@@ -119,6 +119,10 @@ func bootstrapWindow() {
 	// shown in, which is jarring when summoning from another desktop.
 	h.SetLauncherCollectionBehavior()
 	h.OrderOut()
+	// Dismiss when the user clicks another window/app — same convention as
+	// Spotlight/Alfred/Raycast. The Obj-C side ignores resign-key events
+	// while the window is hidden, so this won't fire on our own OrderOut.
+	h.OnResignKey(func() { window.Cancel() })
 	close(bootstrapDone)
 	log.Printf("daemon ready; window hidden, accessory policy set")
 }

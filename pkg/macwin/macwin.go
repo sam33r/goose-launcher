@@ -25,14 +25,25 @@ void  macwin_orderOut(void *win);
 void  macwin_makeKeyAndOrderFront(void *win);
 void  macwin_setAccessoryPolicy(void);
 void  macwin_setLauncherCollectionBehavior(void *win);
+void  macwin_observeResignKey(void *win);
 void  macwin_releaseWindow(void *win);
 */
 import "C"
 
 import (
 	"errors"
+	"sync"
 	"time"
 	"unsafe"
+)
+
+// resignKeyCallbacks maps an NSWindow* to the Go callback registered for it.
+// We store a tiny map (one entry in practice — the daemon owns one window)
+// rather than a single global so the package stays correct if a future
+// caller registers callbacks for multiple windows.
+var (
+	resignKeyMu  sync.RWMutex
+	resignKeyCBs = map[unsafe.Pointer]func(){}
 )
 
 // Handle is an opaque retained reference to an NSWindow. Release with Free
@@ -101,11 +112,34 @@ func (h *Handle) SetLauncherCollectionBehavior() {
 	C.macwin_setLauncherCollectionBehavior(h.ptr)
 }
 
+// OnResignKey registers cb to fire when the window loses key status —
+// i.e. the user clicked another window/app. The Obj-C side suppresses
+// notifications that arrive while the window is hidden, so cb only runs
+// on actual user-driven blurs (not the orderOut() the daemon performs
+// after a selection).
+//
+// cb runs on macOS's main thread; keep it cheap and non-blocking. In
+// particular, do not call back into Gio (e.g. Window.Invalidate) — the
+// daemon will issue a dispatch_sync to main right after this returns
+// (OrderOut), and any main-thread re-entry from cb will deadlock.
+func (h *Handle) OnResignKey(cb func()) {
+	if h == nil || h.ptr == nil {
+		return
+	}
+	resignKeyMu.Lock()
+	resignKeyCBs[h.ptr] = cb
+	resignKeyMu.Unlock()
+	C.macwin_observeResignKey(h.ptr)
+}
+
 // Free releases the retained NSWindow reference. Idempotent.
 func (h *Handle) Free() {
 	if h == nil || h.ptr == nil {
 		return
 	}
+	resignKeyMu.Lock()
+	delete(resignKeyCBs, h.ptr)
+	resignKeyMu.Unlock()
 	C.macwin_releaseWindow(h.ptr)
 	h.ptr = nil
 }
@@ -115,4 +149,17 @@ func (h *Handle) Free() {
 // Overrides Gio's hardcoded Regular policy.
 func SetAccessoryPolicy() {
 	C.macwin_setAccessoryPolicy()
+}
+
+// macwinDidResignKey is called from Obj-C when an observed window loses
+// key status. It dispatches to the registered Go callback for that window.
+//
+//export macwinDidResignKey
+func macwinDidResignKey(win unsafe.Pointer) {
+	resignKeyMu.RLock()
+	cb := resignKeyCBs[win]
+	resignKeyMu.RUnlock()
+	if cb != nil {
+		cb()
+	}
 }

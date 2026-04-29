@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"image/color"
+	"sync"
 	"time"
 
 	"gioui.org/app"
@@ -88,8 +89,9 @@ type Window struct {
 
 	// Daemon-mode signaling. nil channels are fine (no daemon waiting); the
 	// non-blocking sends elsewhere handle that case.
-	requestDone    chan struct{} // closed when current request completes (selection or cancel)
-	firstFrameOnce chan struct{} // closed exactly once after the first FrameEvent
+	requestDone     chan struct{} // closed when current request completes (selection or cancel)
+	requestDoneOnce *sync.Once    // guards close(requestDone) — Cancel can fire from a non-Gio thread
+	firstFrameOnce  chan struct{} // closed exactly once after the first FrameEvent
 }
 
 // NewWindow creates a launcher window pre-loaded with items. Standalone
@@ -230,7 +232,20 @@ drained:
 	w.searchInput.SetText("")
 
 	// Fresh per-request signal channel. Closed when selection/cancel happens.
+	// Wrap close in a sync.Once because Cancel may fire from the macOS main
+	// thread (resignKey notification) at the same time as RunForever sees the
+	// cancelled flag — both paths funnel through signalRequestDone.
 	w.requestDone = make(chan struct{})
+	w.requestDoneOnce = &sync.Once{}
+}
+
+// signalRequestDone closes w.requestDone exactly once for the current request.
+// Safe to call from any goroutine. No-op if no request is currently active.
+func (w *Window) signalRequestDone() {
+	if w.requestDoneOnce == nil || w.requestDone == nil {
+		return
+	}
+	w.requestDoneOnce.Do(func() { close(w.requestDone) })
 }
 
 // AppendItems pushes a batch of items into the live launcher. Safe to call
@@ -345,12 +360,13 @@ func (w *Window) RunForever() error {
 			w.markFirstFrameDone()
 
 			// Once a request completes, signal the daemon's request handler
-			// (which is parked in WaitForSelection). We close the channel so
-			// concurrent waiters all unblock; the daemon installs a fresh
-			// channel in Configure for the next request.
-			if (w.selected != "" || w.cancelled) && w.requestDone != nil {
-				close(w.requestDone)
-				w.requestDone = nil
+			// (which is parked in WaitForSelection). signalRequestDone is
+			// idempotent — Cancel may have already closed the channel from
+			// the macOS notification thread (e.g. click-outside dismissal,
+			// where the window is no longer key and Invalidate doesn't
+			// produce a FrameEvent for our cancelled-flag check to run).
+			if w.selected != "" || w.cancelled {
+				w.signalRequestDone()
 			}
 		}
 	}
@@ -391,15 +407,20 @@ func (w *Window) WaitForSelection() string {
 	return w.selected
 }
 
-// Cancel dismisses the current request as if the user pressed ESC. Used by
-// the daemon's benchmark path to measure show→done latency without human
-// interaction. Wakes Run/RunForever via Invalidate so the cancelled flag is
-// observed promptly.
+// Cancel dismisses the current request as if the user pressed ESC. Safe to
+// call from any goroutine, including the macOS main thread (the resignKey
+// notification path). Closes the request-done channel directly so callers
+// parked in WaitForSelection wake up immediately, regardless of whether the
+// Gio loop is currently producing FrameEvents.
+//
+// We do NOT call w.app.Invalidate() here: when this runs on the main
+// thread (resignKey), Invalidate can deadlock against the daemon's
+// subsequent dispatch_sync call to OrderOut. The signalRequestDone above
+// is sufficient — the daemon hides the window via OrderOut, no frame
+// needed.
 func (w *Window) Cancel() {
 	w.cancelled = true
-	if w.app != nil {
-		w.app.Invalidate()
-	}
+	w.signalRequestDone()
 }
 
 // filterItems filters items based on the search query.

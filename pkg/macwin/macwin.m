@@ -9,6 +9,11 @@
 
 #import <Cocoa/Cocoa.h>
 
+// Forward declaration of the Go-exported callback. cgo emits the prototype
+// in _cgo_export.h; that header is generated for the Go file in this package
+// and is implicitly available to .m files compiled in the same package.
+extern void macwinDidResignKey(void *win);
+
 // macwin_findFirstWindow returns a retained pointer to the first non-nil
 // NSWindow in [NSApp windows]. Caller must macwin_releaseWindow when done.
 // Returns NULL if no window exists yet (Gio hasn't created one).
@@ -85,6 +90,35 @@ void macwin_setLauncherCollectionBehavior(void *win) {
             NSWindowCollectionBehaviorMoveToActiveSpace |
             NSWindowCollectionBehaviorTransient |
             NSWindowCollectionBehaviorFullScreenAuxiliary];
+    });
+}
+
+// macwin_observeResignKey registers an NSNotificationCenter observer that
+// fires when the given NSWindow loses key status. Used to dismiss the
+// launcher when the user clicks another window/app — same effect as ESC.
+//
+// The block runs on the main thread (notifications post to the same thread
+// the event arrived on, which for window key changes is always main). It
+// suppresses the notification that fires when the daemon itself hides the
+// window via [orderOut:] after a selection: at that point the window is
+// no longer visible, so isVisible returns NO.
+//
+// Observer lifetime: tied to the NSWindow's. We never call removeObserver
+// because the daemon holds the window for its entire lifetime.
+void macwin_observeResignKey(void *win) {
+    if (win == NULL) return;
+    NSWindow *w = (__bridge NSWindow *)win;
+    void *winKey = win; // captured by value for the Go callback lookup
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        [[NSNotificationCenter defaultCenter]
+            addObserverForName:NSWindowDidResignKeyNotification
+                        object:w
+                         queue:[NSOperationQueue mainQueue]
+                    usingBlock:^(NSNotification *note) {
+                        NSWindow *src = (NSWindow *)note.object;
+                        if (![src isVisible]) return;
+                        macwinDidResignKey(winKey);
+                    }];
     });
 }
 
