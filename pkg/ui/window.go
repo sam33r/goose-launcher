@@ -4,6 +4,7 @@ import (
 	_ "embed"
 	"fmt"
 	"image/color"
+	"strings"
 	"sync"
 	"time"
 
@@ -66,6 +67,7 @@ type Window struct {
 	cancelled        bool   // True if user pressed ESC
 	keyTag           bool   // Tag for key events
 	highlightMatches bool   // Whether to highlight matching text
+	multi            bool   // Multi-select mode
 	metrics          StartupMetrics // Startup performance metrics
 	firstFrame       bool           // Track if first frame rendered
 
@@ -100,9 +102,9 @@ type Window struct {
 // NewWindow creates a launcher window pre-loaded with items. Standalone
 // (legacy) entry point — kept for tests. Daemon callers should use
 // NewWindowEmpty + Configure.
-func NewWindow(items []input.Item, highlightMatches bool, exactMode bool, rankEnabled bool) *Window {
+func NewWindow(items []input.Item, highlightMatches bool, exactMode bool, rankEnabled bool, multi bool) *Window {
 	w := newWindowShell()
-	w.Configure(items, highlightMatches, exactMode, rankEnabled)
+	w.Configure(items, highlightMatches, exactMode, rankEnabled, multi)
 	return w
 }
 
@@ -180,8 +182,8 @@ func newWindowShell() *Window {
 // Daemon callers must not call Configure while the event loop is mid-frame
 // for a previous request — the daemon's serialization (workMu) ensures this
 // by draining requests one-at-a-time.
-func (w *Window) Configure(items []input.Item, highlightMatches, exactMode, rankEnabled bool) {
-	w.configureCommon(highlightMatches, exactMode, rankEnabled)
+func (w *Window) Configure(items []input.Item, highlightMatches, exactMode, rankEnabled, multi bool) {
+	w.configureCommon(highlightMatches, exactMode, rankEnabled, multi)
 	w.items = items
 	w.filtered = items
 	w.itemsGeneration++
@@ -191,8 +193,8 @@ func (w *Window) Configure(items []input.Item, highlightMatches, exactMode, rank
 // Configure but starts with no items — the daemon will push items through
 // AppendItems as stdin arrives. Used by the daemon path so the window can
 // appear immediately while items stream in behind it.
-func (w *Window) ConfigureEmpty(highlightMatches, exactMode, rankEnabled bool) {
-	w.configureCommon(highlightMatches, exactMode, rankEnabled)
+func (w *Window) ConfigureEmpty(highlightMatches, exactMode, rankEnabled, multi bool) {
+	w.configureCommon(highlightMatches, exactMode, rankEnabled, multi)
 	w.items = nil
 	w.filtered = nil
 	w.itemsGeneration++
@@ -201,13 +203,18 @@ func (w *Window) ConfigureEmpty(highlightMatches, exactMode, rankEnabled bool) {
 // configureCommon resets all per-request state shared by Configure and
 // ConfigureEmpty. Caller is responsible for setting items/filtered and
 // bumping itemsGeneration appropriately.
-func (w *Window) configureCommon(highlightMatches, exactMode, rankEnabled bool) {
+func (w *Window) configureCommon(highlightMatches, exactMode, rankEnabled, multi bool) {
 	for k := range w.matchPositions {
 		delete(w.matchPositions, k)
 	}
 	w.matcher = matcher.NewFuzzyMatcher(false, exactMode)
 	w.rankEnabled = rankEnabled
 	w.highlightMatches = highlightMatches
+	w.multi = multi
+	if multi {
+		w.list.EnableMulti()
+	}
+	w.list.ClearMarks()
 
 	// Reset per-request runtime state.
 	w.selected = ""
@@ -415,6 +422,47 @@ func (w *Window) WaitForSelection() string {
 	return w.selected
 }
 
+// toggleCurrentMark flips the mark on the row currently under the cursor.
+// No-op when --multi is off, when there are no filtered items, or when the
+// cursor is out of range. Called from the Space and Ctrl+Shift+J/K handlers.
+func (w *Window) toggleCurrentMark() {
+	if !w.multi || len(w.filtered) == 0 {
+		return
+	}
+	idx := w.list.Selected()
+	if idx < 0 || idx >= len(w.filtered) {
+		return
+	}
+	w.list.ToggleMark(w.filtered[idx].Raw)
+}
+
+// selectionOutput returns the string that will be written to stdout when the
+// user accepts. In single-select mode (default), that's the cursor row's
+// Raw text. In --multi mode with marks, it's every marked item joined by
+// newlines, in original stdin order so the output is deterministic and
+// independent of mark order. With --multi but no marks, falls back to the
+// cursor row (matches fzf).
+//
+// Caller must guarantee len(w.filtered) > 0.
+func (w *Window) selectionOutput() string {
+	cursor := w.filtered[w.list.Selected()].Raw
+	if !w.multi || w.list.MarkedCount() == 0 {
+		return cursor
+	}
+	out := make([]string, 0, w.list.MarkedCount())
+	for _, it := range w.items {
+		if w.list.IsMarked(it.Raw) {
+			out = append(out, it.Raw)
+		}
+	}
+	if len(out) == 0 {
+		// Defensive: marks can become orphaned if the producer streams in
+		// a different set after marking (rare). Fall back to the cursor.
+		return cursor
+	}
+	return strings.Join(out, "\n")
+}
+
 // Cancel dismisses the current request as if the user pressed ESC. Safe to
 // call from any goroutine, including the macOS main thread (the resignKey
 // notification path). Closes the request-done channel directly so callers
@@ -615,13 +663,21 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 			break
 		}
 		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			if e.Modifiers.Contain(key.ModCtrl) {
+				// Ctrl+Enter is the multi-select mark toggle (handled by
+				// its own filter below). Skip here so we don't both
+				// toggle and accept on the same keypress.
+				continue
+			}
 			if e.Modifiers.Contain(key.ModShift) {
 				// Shift+Enter: Use current query as selection
 				w.selected = w.searchInput.Text()
 			} else if len(w.filtered) > 0 {
-				// Regular Enter: Select current item from filtered list
-				idx := w.list.Selected()
-				w.selected = w.filtered[idx].Raw
+				// Regular Enter: in --multi mode emit every marked item
+				// (newline-joined, in original stdin order); otherwise the
+				// current cursor row. fzf falls back to the cursor when
+				// nothing is marked — we mirror that.
+				w.selected = w.selectionOutput()
 			} else if w.searchInput.Text() != "" {
 				// No matches but text in input: output the query text (like Shift+Enter)
 				w.selected = w.searchInput.Text()
@@ -655,14 +711,65 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 		}
 	}
 
+	// Multi-select keybindings (only meaningful when --multi is on, but we
+	// register the filters unconditionally — toggleCurrentMark is a no-op
+	// when multi-select is off, so an accidental Space press in normal mode
+	// still types into the search field as expected).
+	if w.multi {
+		// Ctrl+Enter — toggle mark on cursor row. Picked because it's a
+		// non-printable combo: the search-input editor consumes any
+		// printable key (incl. Shift+Space) via EditEvent regardless of
+		// our key.Filter, so the binding has to live in modifier-key
+		// territory to be reliable.
+		for {
+			ev, ok := gtx.Event(key.Filter{Name: key.NameReturn, Required: key.ModCtrl})
+			if !ok {
+				break
+			}
+			if e, ok := ev.(key.Event); ok && e.State == key.Press {
+				w.toggleCurrentMark()
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}
+		// Ctrl+Shift+J — toggle mark and move down (fast bulk-mark).
+		for {
+			ev, ok := gtx.Event(key.Filter{Name: "J", Required: key.ModCtrl | key.ModShift})
+			if !ok {
+				break
+			}
+			if e, ok := ev.(key.Event); ok && e.State == key.Press {
+				w.toggleCurrentMark()
+				w.list.MoveDown(len(w.filtered))
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}
+		// Ctrl+Shift+K — toggle mark and move up.
+		for {
+			ev, ok := gtx.Event(key.Filter{Name: "K", Required: key.ModCtrl | key.ModShift})
+			if !ok {
+				break
+			}
+			if e, ok := ev.(key.Event); ok && e.State == key.Press {
+				w.toggleCurrentMark()
+				w.list.MoveUp()
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}
+	}
+
 	// Paint dark background (fzf-style)
 	paint.Fill(gtx.Ops, w.theme.Bg)
 
 	// Render everything
 	dims := layout.Flex{Axis: layout.Vertical}.Layout(gtx,
-		// Item count display (fzf-style: "X/Y")
+		// Item count display (fzf-style: "X/Y", or "M/X/Y" when --multi).
 		layout.Rigid(func(gtx layout.Context) layout.Dimensions {
-			countText := fmt.Sprintf("  %d/%d", len(w.filtered), len(w.items))
+			var countText string
+			if w.multi {
+				countText = fmt.Sprintf("  %d/%d/%d", w.list.MarkedCount(), len(w.filtered), len(w.items))
+			} else {
+				countText = fmt.Sprintf("  %d/%d", len(w.filtered), len(w.items))
+			}
 			label := material.Body1(w.theme, countText)
 			label.Color = color.NRGBA{R: 150, G: 150, B: 150, A: 255} // Dim gray
 			return layout.Inset{Top: unit.Dp(4), Bottom: unit.Dp(4)}.Layout(gtx, label.Layout)
@@ -688,7 +795,14 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 	// or presses Enter.
 	acceptedIdx := w.list.GetAccepted()
 	if acceptedIdx >= 0 && acceptedIdx < len(w.filtered) {
-		w.selected = w.filtered[acceptedIdx].Raw
+		// In multi-select mode a double-click on an unmarked row should
+		// still accept just that row (matches fzf — explicit accept beats
+		// pending marks). Otherwise emit the marked set.
+		if w.multi && w.list.MarkedCount() > 0 && w.list.IsMarked(w.filtered[acceptedIdx].Raw) {
+			w.selected = w.selectionOutput()
+		} else {
+			w.selected = w.filtered[acceptedIdx].Raw
+		}
 		w.list.ResetAccepted()
 	}
 
@@ -707,8 +821,7 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 		// Check for submit event (Enter key from editor)
 		if _, ok := ev.(widget.SubmitEvent); ok {
 			if w.selected == "" && len(w.filtered) > 0 {
-				idx := w.list.Selected()
-				w.selected = w.filtered[idx].Raw
+				w.selected = w.selectionOutput()
 			} else if w.selected == "" && w.searchInput.Text() != "" {
 				w.selected = w.searchInput.Text()
 			}

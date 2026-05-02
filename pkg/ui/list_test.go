@@ -157,6 +157,126 @@ func TestHandleClickEvent_IgnoresPressAndCancel(t *testing.T) {
 	}
 }
 
+// TestList_MultiToggleAndCount — toggling marks flips IsMarked and updates
+// MarkedCount. Multi-select APIs must be no-ops until EnableMulti is called
+// so single-select callers don't accidentally accrue mark state.
+func TestList_MultiToggleAndCount(t *testing.T) {
+	list := NewList()
+
+	// Before EnableMulti: ToggleMark must do nothing, IsMarked must report false.
+	list.ToggleMark("a")
+	if list.IsMarked("a") {
+		t.Errorf("multi-select disabled: IsMarked(a) = true, want false")
+	}
+	if list.MarkedCount() != 0 {
+		t.Errorf("multi-select disabled: MarkedCount = %d, want 0", list.MarkedCount())
+	}
+
+	list.EnableMulti()
+	list.ToggleMark("a")
+	list.ToggleMark("b")
+	if !list.IsMarked("a") || !list.IsMarked("b") {
+		t.Errorf("after ToggleMark(a,b): IsMarked(a)=%v IsMarked(b)=%v, want both true",
+			list.IsMarked("a"), list.IsMarked("b"))
+	}
+	if list.MarkedCount() != 2 {
+		t.Errorf("after marking 2 items: MarkedCount = %d, want 2", list.MarkedCount())
+	}
+
+	// Toggling an existing mark removes it.
+	list.ToggleMark("a")
+	if list.IsMarked("a") {
+		t.Errorf("after second ToggleMark(a): IsMarked(a) = true, want false")
+	}
+	if list.MarkedCount() != 1 {
+		t.Errorf("after un-marking a: MarkedCount = %d, want 1", list.MarkedCount())
+	}
+
+	list.ClearMarks()
+	if list.MarkedCount() != 0 {
+		t.Errorf("after ClearMarks: MarkedCount = %d, want 0", list.MarkedCount())
+	}
+}
+
+// TestWindow_SelectionOutput_MultiEmitsInInputOrder — the daemon must see
+// every marked item joined by newlines, in original stdin order, regardless
+// of the order in which the user marked them. This is the contract the goosey
+// side will rely on.
+func TestWindow_SelectionOutput_MultiEmitsInInputOrder(t *testing.T) {
+	w := newStreamingTestWindow()
+	w.items = []appinput.Item{
+		{Text: "alpha", Raw: "alpha"},
+		{Text: "beta", Raw: "beta"},
+		{Text: "gamma", Raw: "gamma"},
+		{Text: "delta", Raw: "delta"},
+	}
+	w.filtered = w.items
+	w.multi = true
+	w.list.EnableMulti()
+	w.list.ToggleMark("delta") // marked out of order
+	w.list.ToggleMark("alpha")
+	w.list.ToggleMark("gamma")
+
+	got := w.selectionOutput()
+	want := "alpha\ngamma\ndelta"
+	if got != want {
+		t.Errorf("selectionOutput = %q, want %q", got, want)
+	}
+}
+
+// TestWindow_SelectionOutput_MultiNoMarksFallsBackToCursor — fzf parity:
+// pressing Enter with --multi but no marks behaves like single-select.
+func TestWindow_SelectionOutput_MultiNoMarksFallsBackToCursor(t *testing.T) {
+	w := newStreamingTestWindow()
+	w.items = []appinput.Item{
+		{Text: "alpha", Raw: "alpha"},
+		{Text: "beta", Raw: "beta"},
+	}
+	w.filtered = w.items
+	w.multi = true
+	w.list.EnableMulti()
+	w.list.selected = 1 // cursor on "beta"
+
+	got := w.selectionOutput()
+	if got != "beta" {
+		t.Errorf("multi-mode + no marks: selectionOutput = %q, want %q", got, "beta")
+	}
+}
+
+// TestWindow_SelectionOutput_SingleMode — when --multi is off, marks are
+// ignored entirely (defense-in-depth: even if state leaks, output stays
+// single-row).
+func TestWindow_SelectionOutput_SingleMode(t *testing.T) {
+	w := newStreamingTestWindow()
+	w.items = []appinput.Item{
+		{Text: "alpha", Raw: "alpha"},
+		{Text: "beta", Raw: "beta"},
+	}
+	w.filtered = w.items
+	w.multi = false
+	w.list.selected = 0
+
+	got := w.selectionOutput()
+	if got != "alpha" {
+		t.Errorf("single mode: selectionOutput = %q, want %q", got, "alpha")
+	}
+}
+
+// TestList_MarkSurvivesFilter — marks are keyed by Raw text, so they
+// must persist across filter changes. Regression guard for the design
+// decision NOT to key marks by index into the filtered slice.
+func TestList_MarkSurvivesFilter(t *testing.T) {
+	list := NewList()
+	list.EnableMulti()
+	list.ToggleMark("apricot")
+
+	// Simulate the filtered slice changing under the user — we don't even
+	// pass it to the list; mark state is independent of filter state.
+	if !list.IsMarked("apricot") {
+		t.Errorf("mark on apricot should survive across any filter change")
+	}
+}
+
 // TestListSelectionBounds tests that selection stays within bounds
 func TestListSelectionBounds(t *testing.T) {
 	items := []appinput.Item{

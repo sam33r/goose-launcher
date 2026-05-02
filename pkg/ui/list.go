@@ -28,6 +28,11 @@ type List struct {
 	clicks       []gesture.Click // One per item; grown lazily in Layout
 	scrollToItem int             // Item to scroll to (-1 if no scroll needed)
 	needsScroll  bool            // True if we need to scroll on next layout
+
+	// Multi-select state. marked is nil when --multi is off; the gutter
+	// indicator is keyed by Item.Raw so marks survive filter changes (and
+	// so duplicate Raw lines collapse to one mark, which is fine).
+	marked map[string]bool
 }
 
 // NewList creates a new list widget
@@ -166,6 +171,20 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 			highlightColor = color.NRGBA{R: 255, G: 180, B: 220, A: 255} // Light pink when selected
 		}
 
+		// Multi-select gutter glyph. ">" for marked rows, " " for unmarked
+		// (blank kept so horizontal alignment of item text doesn't shift when
+		// any single row gets marked). Only meaningful when --multi is on; we
+		// detect that via l.MultiEnabled() so no extra plumbing is needed.
+		gutterGlyph := ""
+		if l.MultiEnabled() {
+			if l.IsMarked(item.Raw) {
+				gutterGlyph = ">"
+			} else {
+				gutterGlyph = " "
+			}
+		}
+		gutterColor := color.NRGBA{R: 255, G: 100, B: 180, A: 255} // Same pink as match highlight
+
 		// Use Stack layout pattern for proper vertical centering with minimum height
 		return layout.Inset{Left: unit.Dp(8), Right: unit.Dp(8)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 			minHeight := gtx.Dp(unit.Dp(30))
@@ -194,12 +213,29 @@ func (l *List) layoutItem(gtx layout.Context, theme *material.Theme, item input.
 						// Use Center to vertically center the text
 						return layout.Center.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
 							applyHighlight := highlightMatches && len(matchPositions) > 0
-							if applyHighlight || len(item.Spans) > 0 {
-								return l.layoutStyledText(gtx, theme, item.Text, item.Spans, matchPositions, applyHighlight, baseTextColor, highlightColor)
+							textLayout := func(gtx layout.Context) layout.Dimensions {
+								if applyHighlight || len(item.Spans) > 0 {
+									return l.layoutStyledText(gtx, theme, item.Text, item.Spans, matchPositions, applyHighlight, baseTextColor, highlightColor)
+								}
+								label := material.Body1(theme, item.Text)
+								label.Color = baseTextColor
+								return label.Layout(gtx)
 							}
-							label := material.Body1(theme, item.Text)
-							label.Color = baseTextColor
-							return label.Layout(gtx)
+							if gutterGlyph == "" {
+								return textLayout(gtx)
+							}
+							// Two-column row: 1ch gutter, then the text.
+							return layout.Flex{Axis: layout.Horizontal, Alignment: layout.Baseline}.Layout(gtx,
+								layout.Rigid(func(gtx layout.Context) layout.Dimensions {
+									return layout.Inset{Right: unit.Dp(6)}.Layout(gtx, func(gtx layout.Context) layout.Dimensions {
+										g := material.Body1(theme, gutterGlyph)
+										g.Color = gutterColor
+										g.Font.Weight = font.Bold
+										return g.Layout(gtx)
+									})
+								}),
+								layout.Rigid(textLayout),
+							)
 						})
 					})
 				}),
@@ -455,6 +491,52 @@ func (l *List) MovePageUp() {
 // Selected returns the currently selected index
 func (l *List) Selected() int {
 	return l.selected
+}
+
+// EnableMulti turns on multi-select state. Idempotent — safe to call from
+// the window constructor on every Configure.
+func (l *List) EnableMulti() {
+	if l.marked == nil {
+		l.marked = make(map[string]bool)
+	}
+}
+
+// MultiEnabled reports whether multi-select state has been turned on.
+func (l *List) MultiEnabled() bool {
+	return l.marked != nil
+}
+
+// ToggleMark flips the mark state for an item identified by its Raw text.
+// No-op when multi-select isn't enabled.
+func (l *List) ToggleMark(raw string) {
+	if l.marked == nil {
+		return
+	}
+	if l.marked[raw] {
+		delete(l.marked, raw)
+	} else {
+		l.marked[raw] = true
+	}
+}
+
+// IsMarked reports whether an item is marked. False when multi-select is off.
+func (l *List) IsMarked(raw string) bool {
+	if l.marked == nil {
+		return false
+	}
+	return l.marked[raw]
+}
+
+// MarkedCount returns the number of marked items. Zero when multi-select is off.
+func (l *List) MarkedCount() int {
+	return len(l.marked)
+}
+
+// ClearMarks drops all marks. Used between requests by the daemon.
+func (l *List) ClearMarks() {
+	for k := range l.marked {
+		delete(l.marked, k)
+	}
 }
 
 // GetAccepted returns the index of an item the user accepted

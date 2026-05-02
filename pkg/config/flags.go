@@ -13,6 +13,7 @@ type Config struct {
 	Layout           string
 	HighlightMatches bool   // Highlight matching text in results (default: true)
 	Markup           string // Stdin markup format: "" (off) or "pango"
+	Multi            bool   // Multi-select mode: Ctrl+Enter marks; Enter outputs all marks newline-joined
 }
 
 // ParseFlags parses command-line arguments into Config
@@ -39,6 +40,8 @@ func ParseFlags(args []string) (*Config, error) {
 	fs.StringVar(&cfg.Layout, "layout", "default", "layout style (default|reverse)")
 	fs.BoolVar(&cfg.HighlightMatches, "highlight-matches", true, "highlight matching text in results")
 	fs.StringVar(&cfg.Markup, "markup", "", "stdin markup format: pango (default: off)")
+	fs.BoolVar(&cfg.Multi, "m", false, "enable multi-select (Ctrl+Enter marks; Enter outputs all marked items)")
+	fs.BoolVar(&cfg.Multi, "multi", false, "enable multi-select (Ctrl+Enter marks; Enter outputs all marked items)")
 
 	// Parse
 	if err := fs.Parse(args); err != nil {

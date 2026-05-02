@@ -37,7 +37,7 @@ func TestConfigureEmpty_StartsWithNoItems(t *testing.T) {
 	w.filtered = w.items
 	w.selected = "leftover"
 
-	w.ConfigureEmpty(true, true, false)
+	w.ConfigureEmpty(true, true, false, false)
 
 	if len(w.items) != 0 {
 		t.Errorf("ConfigureEmpty: items len = %d, want 0", len(w.items))
@@ -52,7 +52,7 @@ func TestConfigureEmpty_StartsWithNoItems(t *testing.T) {
 
 func TestAppendItems_ItemsAvailableAfterDrain(t *testing.T) {
 	w := newStreamingTestWindow()
-	w.ConfigureEmpty(true, true, false)
+	w.ConfigureEmpty(true, true, false, false)
 
 	first := []appinput.Item{
 		mustItem("alpha"),
@@ -84,7 +84,7 @@ func TestAppendItems_ItemsAvailableAfterDrain(t *testing.T) {
 
 func TestAppendItems_FilterCacheInvalidatesOnGrowth(t *testing.T) {
 	w := newStreamingTestWindow()
-	w.ConfigureEmpty(true, true, false)
+	w.ConfigureEmpty(true, true, false, false)
 	w.AppendItems([]appinput.Item{mustItem("apple"), mustItem("banana")})
 	w.drainPendingItems()
 
@@ -108,7 +108,7 @@ func TestAppendItems_FilterCacheStableWhenItemsUnchanged(t *testing.T) {
 	// The early-out guard is what keeps idle frames from re-walking 1M items.
 	// Verify it still fires when nothing has changed.
 	w := newStreamingTestWindow()
-	w.ConfigureEmpty(true, true, false)
+	w.ConfigureEmpty(true, true, false, false)
 	w.AppendItems([]appinput.Item{mustItem("apple"), mustItem("apricot")})
 	w.drainPendingItems()
 
@@ -130,7 +130,7 @@ func TestAppendItems_ConcurrentProducers(t *testing.T) {
 	// Multiple goroutines pushing items at once must not lose any. The drain
 	// happens on the consumer (event-loop) goroutine.
 	w := newStreamingTestWindow()
-	w.ConfigureEmpty(true, true, false)
+	w.ConfigureEmpty(true, true, false, false)
 
 	const producers = 8
 	const perProducer = 25

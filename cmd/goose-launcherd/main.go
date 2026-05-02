@@ -245,7 +245,7 @@ func serveRequest(conn net.Conn, hello *daemon.Hello) {
 		}
 	}()
 
-	w.ConfigureEmpty(cfg.HighlightMatches, cfg.ExactMode, cfg.Rank)
+	w.ConfigureEmpty(cfg.HighlightMatches, cfg.ExactMode, cfg.Rank, cfg.Multi)
 	log.Printf("serving streaming request")
 
 	t0 := time.Now()
