@@ -581,6 +581,11 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 			break
 		}
 		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			if w.multi && e.Modifiers.Contain(key.ModShift) {
+				// Shift+Up in --multi mode is the toggle-mark-and-move
+				// binding handled below; skip here to avoid double-move.
+				continue
+			}
 			w.list.MoveUp()
 			gtx.Execute(op.InvalidateCmd{})
 		}
@@ -592,6 +597,9 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 			break
 		}
 		if e, ok := ev.(key.Event); ok && e.State == key.Press {
+			if w.multi && e.Modifiers.Contain(key.ModShift) {
+				continue
+			}
 			w.list.MoveDown(len(w.filtered))
 			gtx.Execute(op.InvalidateCmd{})
 		}
@@ -746,6 +754,30 @@ func (w *Window) layout(gtx layout.Context) layout.Dimensions {
 		// Ctrl+Shift+K — toggle mark and move up.
 		for {
 			ev, ok := gtx.Event(key.Filter{Name: "K", Required: key.ModCtrl | key.ModShift})
+			if !ok {
+				break
+			}
+			if e, ok := ev.(key.Event); ok && e.State == key.Press {
+				w.toggleCurrentMark()
+				w.list.MoveUp()
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}
+		// Shift+Down — alias for Ctrl+Shift+J (toggle mark and move down).
+		for {
+			ev, ok := gtx.Event(key.Filter{Name: key.NameDownArrow, Required: key.ModShift})
+			if !ok {
+				break
+			}
+			if e, ok := ev.(key.Event); ok && e.State == key.Press {
+				w.toggleCurrentMark()
+				w.list.MoveDown(len(w.filtered))
+				gtx.Execute(op.InvalidateCmd{})
+			}
+		}
+		// Shift+Up — alias for Ctrl+Shift+K (toggle mark and move up).
+		for {
+			ev, ok := gtx.Event(key.Filter{Name: key.NameUpArrow, Required: key.ModShift})
 			if !ok {
 				break
 			}
